@@ -1,0 +1,19 @@
+name: Feature request
+description: Propose an addition — a protocol feature, reader capability, or dashboard idea
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The real-world task first — deployment context (reader model, tag population, environment) makes RFID feature requests much more actionable.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should llrpkit do?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds or alternatives you've considered

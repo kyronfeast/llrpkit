@@ -1,0 +1,41 @@
+name: Bug report
+description: Something misbehaves — protocol, CLI, emulator, or dashboard
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! LLRP issues are much easier to fix with wire-level context,
+        so include hex dumps or logs if you have them.
+  - type: input
+    id: version
+    attributes:
+      label: llrpkit version
+      placeholder: "0.1.0 (llrpkit --version)"
+    validations:
+      required: true
+  - type: input
+    id: reader
+    attributes:
+      label: Reader model and firmware
+      description: Or "emulator" if reproduced against the built-in emulator.
+      placeholder: "Impinj R700 / 8.x — or emulator"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The smallest script or CLI invocation that shows the problem.
+      render: python
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / hex dumps / tracebacks
+      render: text
