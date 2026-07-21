@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Impinj Octane LLRP vendor extension definitions for llrpkit (MIT licensed,
+  like the rest of the project — see codegen/THIRD_PARTY.md).
+
+  These describe wire-format facts of Impinj's Octane LLRP protocol
+  extensions: CUSTOM_MESSAGE / custom parameter subtypes under Impinj's IANA
+  Private Enterprise Number 25882, and their binary field layouts, as
+  published by Impinj in its Octane LLRP documentation for third-party LLRP
+  client interoperability. Element vocabulary follows the LLRP Toolkit's
+  llrpdef binary-encoding schema so one generator handles both files.
+
+  Coverage: the extensions llrpkit uses for inventory tuning, tag report
+  enrichment, reader health, and configuration. Additions welcome — add the
+  definition here and rerun codegen/generate.py.
+-->
+<llrpdef>
+
+  <vendorDefinition name="Impinj" vendorID="25882"/>
+
+  <!-- ============================= enums ============================= -->
+
+  <customEnumerationDefinition name="ImpinjRequestedDataType">
+    <entry value="1000" name="All_Capabilities"/>
+    <entry value="1001" name="Impinj_Detailed_Version"/>
+    <entry value="1002" name="Impinj_Frequency_Capabilities"/>
+    <entry value="1003" name="Impinj_Array_Capabilities"/>
+    <entry value="2000" name="All_Configuration"/>
+    <entry value="2001" name="Impinj_Sub_Regulatory_Region"/>
+    <entry value="2002" name="Impinj_Forklift_Configuration"/>
+    <entry value="2003" name="Impinj_GPI_Debounce_Configuration"/>
+    <entry value="2004" name="Impinj_Reader_Temperature"/>
+    <entry value="2005" name="Impinj_Link_Monitor_Configuration"/>
+    <entry value="2006" name="Impinj_Report_Buffer_Configuration"/>
+    <entry value="2007" name="Impinj_Access_Spec_Configuration"/>
+    <entry value="2008" name="Impinj_GPS_NMEA_Sentences"/>
+    <entry value="2009" name="Impinj_Advanced_GPO_Configuration"/>
+    <entry value="2010" name="Impinj_Tilt_Configuration"/>
+    <entry value="2011" name="Impinj_Beacon_Configuration"/>
+    <entry value="2012" name="Impinj_Antenna_Configuration"/>
+    <entry value="2013" name="Impinj_Location_Configuration"/>
+    <entry value="2014" name="Impinj_Transition_Configuration"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjRegulatoryRegion">
+    <entry value="0" name="FCC_Part_15_247"/>
+    <entry value="1" name="ETSI_EN_300_220"/>
+    <entry value="2" name="ETSI_EN_302_208_With_LBT"/>
+    <entry value="3" name="Hong_Kong_920_925_MHz"/>
+    <entry value="4" name="Taiwan_922_928_MHz"/>
+    <entry value="5" name="Japan_952_954_MHz"/>
+    <entry value="6" name="Japan_952_954_MHz_Low_Power"/>
+    <entry value="7" name="ETSI_EN_302_208_v1_2_1"/>
+    <entry value="8" name="Korea_917_921_MHz"/>
+    <entry value="9" name="Malaysia_919_923_MHz"/>
+    <entry value="10" name="China_920_925_MHz"/>
+    <entry value="11" name="Japan_952_956_MHz_Without_LBT"/>
+    <entry value="12" name="South_Africa_915_919_MHz"/>
+    <entry value="13" name="Brazil_902_907_and_915_928_MHz"/>
+    <entry value="14" name="Thailand_920_925_MHz"/>
+    <entry value="15" name="Singapore_920_925_MHz"/>
+    <entry value="16" name="Australia_920_926_MHz"/>
+    <entry value="17" name="India_865_867_MHz"/>
+    <entry value="18" name="Uruguay_916_928_MHz"/>
+    <entry value="19" name="Vietnam_920_925_MHz"/>
+    <entry value="20" name="Israel_915_917_MHz"/>
+    <entry value="21" name="Philippines_918_920_MHz"/>
+    <entry value="22" name="Canada_Post"/>
+    <entry value="23" name="Indonesia_923_925_MHz"/>
+    <entry value="24" name="New_Zealand_921p5_928_MHz"/>
+    <entry value="25" name="Japan_916_921_MHz_Without_LBT"/>
+    <entry value="26" name="Latin_America_902_928_MHz"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjInventorySearchType">
+    <entry value="0" name="Reader_Selected"/>
+    <entry value="1" name="Single_Target"/>
+    <entry value="2" name="Dual_Target"/>
+    <entry value="3" name="Single_Target_With_Suppression"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjFixedFrequencyMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Auto_Select"/>
+    <entry value="2" name="Channel_List"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjReducedPowerMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjLowDutyCycleMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjLinkMonitorMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjReportBufferMode">
+    <entry value="0" name="Normal"/>
+    <entry value="1" name="Low_Latency"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjSerializedTIDMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjRFPhaseAngleMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjPeakRSSIMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjGPSCoordinatesMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjOptimizedReadMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjAccessSpecOrderingMode">
+    <entry value="0" name="FIFO"/>
+    <entry value="1" name="Ascending"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjRFDopplerFrequencyMode">
+    <entry value="0" name="Disabled"/>
+    <entry value="1" name="Enabled"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjAdvancedGPOMode">
+    <entry value="0" name="Normal"/>
+    <entry value="1" name="Pulsed"/>
+    <entry value="2" name="Reader_Operational_Status"/>
+    <entry value="3" name="LLRP_Connection_Status"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjHubConnectedType">
+    <entry value="0" name="Unknown"/>
+    <entry value="1" name="Disconnected"/>
+    <entry value="2" name="Connected"/>
+  </customEnumerationDefinition>
+
+  <customEnumerationDefinition name="ImpinjHubFaultType">
+    <entry value="0" name="No_Fault"/>
+    <entry value="1" name="RF_Power"/>
+    <entry value="2" name="RF_Power_On_Hub_1"/>
+    <entry value="3" name="RF_Power_On_Hub_2"/>
+    <entry value="4" name="RF_Power_On_Hub_3"/>
+    <entry value="5" name="RF_Power_On_Hub_4"/>
+    <entry value="6" name="No_Init"/>
+    <entry value="7" name="Serial_Overflow"/>
+    <entry value="8" name="Disconnected"/>
+  </customEnumerationDefinition>
+
+  <!-- ============================ messages =========================== -->
+
+  <!-- Enables the Octane extensions for the current LLRP connection; must be
+       re-sent after every reconnect. -->
+  <customMessageDefinition name="IMPINJ_ENABLE_EXTENSIONS" subtype="21">
+    <reserved bitCount="32"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customMessageDefinition>
+
+  <customMessageDefinition name="IMPINJ_ENABLE_EXTENSIONS_RESPONSE" subtype="22">
+    <parameter repeat="1" type="LLRPStatus"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customMessageDefinition>
+
+  <!-- Persists the current configuration across reader reboots. -->
+  <customMessageDefinition name="IMPINJ_SAVE_SETTINGS" subtype="23">
+    <field type="u1" name="SaveConfiguration"/>
+    <reserved bitCount="7"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customMessageDefinition>
+
+  <customMessageDefinition name="IMPINJ_SAVE_SETTINGS_RESPONSE" subtype="24">
+    <parameter repeat="1" type="LLRPStatus"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customMessageDefinition>
+
+  <!-- =========================== parameters ========================== -->
+
+  <!-- Selector for GET_READER_CONFIG / GET_READER_CAPABILITIES requests of
+       Impinj-specific data. -->
+  <customParameterDefinition name="ImpinjRequestedData" subtype="21">
+    <field type="u32" name="RequestedData" enumeration="ImpinjRequestedDataType"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjSubRegulatoryRegion" subtype="22">
+    <field type="u16" name="RegulatoryRegion" enumeration="ImpinjRegulatoryRegion"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Inventory search mode: dual target, single target, TagFocus
+       (single target with suppression), etc. Attach to
+       C1G2InventoryCommand inside an AISpec. -->
+  <customParameterDefinition name="ImpinjInventorySearchMode" subtype="23">
+    <field type="u16" name="InventorySearchMode" enumeration="ImpinjInventorySearchType"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjFixedFrequencyList" subtype="26">
+    <field type="u16" name="FixedFrequencyMode" enumeration="ImpinjFixedFrequencyMode"/>
+    <reserved bitCount="16"/>
+    <field type="u16v" name="ChannelList"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjReducedPowerFrequencyList" subtype="27">
+    <field type="u16" name="ReducedPowerMode" enumeration="ImpinjReducedPowerMode"/>
+    <reserved bitCount="16"/>
+    <field type="u16v" name="ChannelList"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Duty-cycling for empty-field environments: timings in milliseconds. -->
+  <customParameterDefinition name="ImpinjLowDutyCycle" subtype="28">
+    <field type="u16" name="LowDutyCycleMode" enumeration="ImpinjLowDutyCycleMode"/>
+    <field type="u16" name="EmptyFieldTimeout"/>
+    <field type="u16" name="FieldPingInterval"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjDetailedVersion" subtype="29">
+    <field type="utf8v" name="ModelName"/>
+    <field type="utf8v" name="SerialNumber"/>
+    <field type="utf8v" name="SoftwareVersion"/>
+    <field type="utf8v" name="FirmwareVersion"/>
+    <field type="utf8v" name="FPGAVersion"/>
+    <field type="utf8v" name="PCBAVersion"/>
+    <parameter repeat="0-1" type="ImpinjHubVersions"/>
+    <parameter repeat="0-1" type="ImpinjArrayVersion"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjFrequencyCapabilities" subtype="30">
+    <field type="u32v" name="FrequencyList"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjGPIDebounceConfiguration" subtype="36">
+    <field type="u16" name="GPIPortNum"/>
+    <field type="u32" name="GPIDebounceTimerMSec"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Reader temperature in degrees Celsius. -->
+  <customParameterDefinition name="ImpinjReaderTemperature" subtype="37">
+    <field type="s16" name="Temperature"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjLinkMonitorConfiguration" subtype="38">
+    <field type="u16" name="LinkMonitorMode" enumeration="ImpinjLinkMonitorMode"/>
+    <field type="u16" name="LinkDownThreshold"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjReportBufferConfiguration" subtype="39">
+    <field type="u16" name="ReportBufferMode" enumeration="ImpinjReportBufferMode"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjAccessSpecConfiguration" subtype="40">
+    <parameter repeat="0-1" type="ImpinjBlockWriteWordCount"/>
+    <parameter repeat="0-1" type="ImpinjOpSpecRetryCount"/>
+    <parameter repeat="0-1" type="ImpinjAccessSpecOrdering"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjBlockWriteWordCount" subtype="41">
+    <field type="u16" name="WordCount"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Opt-in switches for the extra per-tag report content below. Attach to
+       ROReportSpec (or SET_READER_CONFIG's default report spec). -->
+  <customParameterDefinition name="ImpinjTagReportContentSelector" subtype="50">
+    <parameter repeat="0-1" type="ImpinjEnableSerializedTID"/>
+    <parameter repeat="0-1" type="ImpinjEnableRFPhaseAngle"/>
+    <parameter repeat="0-1" type="ImpinjEnablePeakRSSI"/>
+    <parameter repeat="0-1" type="ImpinjEnableGPSCoordinates"/>
+    <parameter repeat="0-1" type="ImpinjEnableOptimizedRead"/>
+    <parameter repeat="0-1" type="ImpinjEnableRFDopplerFrequency"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjEnableSerializedTID" subtype="51">
+    <field type="u16" name="SerializedTIDMode" enumeration="ImpinjSerializedTIDMode"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjEnableRFPhaseAngle" subtype="52">
+    <field type="u16" name="RFPhaseAngleMode" enumeration="ImpinjRFPhaseAngleMode"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjEnablePeakRSSI" subtype="53">
+    <field type="u16" name="PeakRSSIMode" enumeration="ImpinjPeakRSSIMode"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjEnableGPSCoordinates" subtype="54">
+    <field type="u16" name="GPSCoordinatesMode" enumeration="ImpinjGPSCoordinatesMode"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Per-tag report content, delivered inside TagReportData. -->
+  <customParameterDefinition name="ImpinjSerializedTID" subtype="55">
+    <field type="u16v" name="TID"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Phase angle in units of 2*pi/4096 radians. -->
+  <customParameterDefinition name="ImpinjRFPhaseAngle" subtype="56">
+    <field type="u16" name="PhaseAngle"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Peak RSSI in hundredths of dBm (sub-dBm resolution, unlike the core
+       TV PeakRSSI's whole dBm). -->
+  <customParameterDefinition name="ImpinjPeakRSSI" subtype="57">
+    <field type="s16" name="RSSI"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjGPSCoordinates" subtype="58">
+    <field type="s32" name="Latitude"/>
+    <field type="s32" name="Longitude"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjOpSpecRetryCount" subtype="63">
+    <field type="u16" name="RetryCount"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjAdvancedGPOConfiguration" subtype="64">
+    <field type="u16" name="GPOPortNum"/>
+    <field type="u16" name="GPOMode" enumeration="ImpinjAdvancedGPOMode"/>
+    <field type="u32" name="GPOPulseDurationMSec"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjEnableOptimizedRead" subtype="65">
+    <field type="u16" name="OptimizedReadMode" enumeration="ImpinjOptimizedReadMode"/>
+    <parameter repeat="0-N" type="C1G2Read"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjAccessSpecOrdering" subtype="66">
+    <field type="u16" name="OrderingMode" enumeration="ImpinjAccessSpecOrderingMode"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjEnableRFDopplerFrequency" subtype="67">
+    <field type="u16" name="RFDopplerFrequencyMode" enumeration="ImpinjRFDopplerFrequencyMode"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Doppler shift in Hz/16. -->
+  <customParameterDefinition name="ImpinjRFDopplerFrequency" subtype="68">
+    <field type="s16" name="DopplerFrequency"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <!-- Antenna hub / gateway support. -->
+  <customParameterDefinition name="ImpinjArrayVersion" subtype="1520">
+    <field type="utf8v" name="SerialNumber"/>
+    <field type="utf8v" name="FirmwareVersion"/>
+    <field type="utf8v" name="PCBAVersion"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjHubVersions" subtype="1537">
+    <parameter repeat="1-N" type="ImpinjArrayVersion"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+  <customParameterDefinition name="ImpinjHubConfiguration" subtype="1538">
+    <field type="u16" name="HubID"/>
+    <field type="u16" name="Connected" enumeration="ImpinjHubConnectedType"/>
+    <field type="u16" name="Fault" enumeration="ImpinjHubFaultType"/>
+    <parameter repeat="0-N" type="Custom"/>
+  </customParameterDefinition>
+
+</llrpdef>

@@ -68,6 +68,16 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "PT", "RUF"]
 [tool.ruff.lint.isort]
 known-first-party = ["llrpkit"]
 
+[tool.ruff.format]
+# Generated modules are laid out by codegen/generate.py, not the formatter,
+# so that `generate.py --check` can prove committed code matches definitions.
+exclude = [
+  "src/llrpkit/protocol/enums.py",
+  "src/llrpkit/protocol/params.py",
+  "src/llrpkit/protocol/messages.py",
+  "src/llrpkit/protocol/impinj.py",
+]
+
 [tool.mypy]
 strict = true
 python_version = "3.11"
@@ -84,6 +94,15 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.coverage.run]
 source = ["llrpkit"]
 branch = true
+# Generated protocol tables are exercised representatively (golden vectors,
+# property tests, full default-construction sweeps), not line-by-line;
+# coverage gates the handwritten code.
+omit = [
+  "*/llrpkit/protocol/enums.py",
+  "*/llrpkit/protocol/params.py",
+  "*/llrpkit/protocol/messages.py",
+  "*/llrpkit/protocol/impinj.py",
+]
 
 [tool.coverage.report]
 fail_under = 90
