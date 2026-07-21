@@ -2,8 +2,10 @@
 
 **A modern, typed, asyncio-native Python toolkit for LLRP RAIN RFID readers — built Impinj-first (R700 and Speedway), with a reader emulator, a web dashboard, and a written field guide.**
 
-> 🚧 **Pre-release.** llrpkit is being built in the open toward `v0.1.0`. The scaffold, tooling,
-> and CI are real; the protocol engine lands next. Watch the repo to follow along.
+> 🚧 **Pre-release.** llrpkit is being built in the open toward `v0.1.0`. The wire protocol is
+> real: a bit-accurate codec plus generated classes for all of LLRP 1.0.1 and the Impinj Octane
+> extensions, verified by hand-computed golden vectors and fuzzing. The asyncio client and
+> emulator land next. Watch the repo to follow along.
 
 ## Why
 

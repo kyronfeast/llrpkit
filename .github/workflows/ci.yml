@@ -57,3 +57,14 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install -e ".[docs]"
       - run: mkdocs build --strict
+
+  codegen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The generator is stdlib-only; this proves the committed protocol
+      # modules are byte-identical to what the definitions produce.
+      - run: python codegen/generate.py --check
