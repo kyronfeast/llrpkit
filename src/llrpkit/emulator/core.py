@@ -1,0 +1,491 @@
+"""An in-process LLRP reader emulator.
+
+This is llrpkit's test rig and zero-hardware demo: an asyncio TCP server that
+speaks genuine LLRP — the connection-attempt handshake, capabilities,
+configuration, the full ROSpec lifecycle, and the Impinj Octane extensions
+handshake — and streams synthetic tag reports from a configurable tag
+population while a ROSpec is active.
+
+It models protocol behavior and plausible statistics, not RF physics; the
+point is that everything a client does against a real Impinj reader has a
+faithful wire-level counterpart here. Behavioral realism grows over time
+(reader modes and sessions influencing read rate arrive with the tuning
+work); differences found against real hardware are treated as emulator bugs.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import random
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from llrpkit.constants import IMPINJ_PEN, MESSAGE_HEADER_LEN
+from llrpkit.exceptions import MessageDecodeError
+from llrpkit.protocol import BitStr, LLRPMessage, decode_message, enums, impinj, messages, params
+
+log = logging.getLogger(__name__)
+
+_MAX_FRAME = 4 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class EmulatedTag:
+    """One synthetic tag: where it can be seen and how strongly."""
+
+    epc: bytes
+    antennas: tuple[int, ...] = (1,)
+    rssi_dbm: float = -55.0
+    weight: float = 1.0
+
+
+def default_population(count: int = 12, antenna_count: int = 4) -> list[EmulatedTag]:
+    """A pleasant default tag population spread across antennas."""
+    tags = []
+    for i in range(count):
+        epc = bytes([0xE2, 0x00, 0x00, 0x17, 0x01, 0x0B, 0x01, 0x62, 0x10, 0x00, i >> 8, i & 0xFF])
+        tags.append(
+            EmulatedTag(
+                epc=epc,
+                antennas=(1 + (i % antenna_count),),
+                rssi_dbm=-45.0 - (i % 6) * 3.5,
+                weight=1.0 + (i % 3),
+            )
+        )
+    return tags
+
+
+class LLRPEmulator:
+    """A fake Impinj-flavored LLRP reader listening on a TCP port.
+
+    Usage::
+
+        async with LLRPEmulator() as emu:
+            reader = Reader("127.0.0.1", emu.port)
+            ...
+
+    One controlling client at a time, as LLRP semantics require — a second
+    connection is refused with the proper ``ConnectionAttemptEvent``.
+    """
+
+    def __init__(
+        self,
+        *,
+        host: str = "127.0.0.1",
+        port: int = 0,
+        tags: Sequence[EmulatedTag] | None = None,
+        reads_per_sec: float = 100.0,
+        antenna_count: int = 4,
+        seed: int = 1,
+        model_number: int = 700,
+        firmware: str = "llrpkit-emu 0.1",
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.antenna_count = antenna_count
+        self.reads_per_sec = reads_per_sec
+        self.model_number = model_number
+        self.firmware = firmware
+        self.tags = list(tags) if tags is not None else default_population(12, antenna_count)
+        self._rng = random.Random(seed)
+        self._server: asyncio.Server | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._send_lock = asyncio.Lock()
+        self._extensions_enabled = False
+        self._rospecs: dict[int, tuple[params.ROSpec, str]] = {}
+        self._report_task: asyncio.Task[None] | None = None
+        self._keepalive_acked = asyncio.Event()
+        self._drop_once: set[type[LLRPMessage]] = set()
+
+    # -- lifecycle ---------------------------------------------------------
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._handle_client, self.host, self.port)
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def stop(self) -> None:
+        self._stop_reporting()
+        if self._writer is not None:
+            with contextlib.suppress(Exception):
+                self._writer.close()
+            self._writer = None
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+    async def __aenter__(self) -> LLRPEmulator:
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.stop()
+
+    # -- test hooks --------------------------------------------------------
+
+    def drop_next(self, msg_type: type[LLRPMessage]) -> None:
+        """Silently swallow the next message of ``msg_type`` (timeout testing)."""
+        self._drop_once.add(msg_type)
+
+    async def send_keepalive(self) -> None:
+        self._keepalive_acked.clear()
+        await self._send(messages.KEEPALIVE(), message_id=99)
+
+    async def wait_keepalive_ack(self, timeout: float = 2.0) -> None:
+        await asyncio.wait_for(self._keepalive_acked.wait(), timeout)
+
+    # -- connection handling -----------------------------------------------
+
+    async def _handle_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        if self._writer is not None:
+            await self._send_connection_event(
+                writer,
+                enums.ConnectionAttemptStatusType.Failed_A_Client_Initiated_Connection_Already_Exists,
+            )
+            with contextlib.suppress(Exception):
+                await writer.drain()
+                writer.close()
+            return
+        self._writer = writer
+        self._extensions_enabled = False
+        self._rospecs = {}
+        await self._send_connection_event(writer, enums.ConnectionAttemptStatusType.Success)
+        try:
+            while True:
+                header = await reader.readexactly(MESSAGE_HEADER_LEN)
+                length = int.from_bytes(header[2:6], "big")
+                if not MESSAGE_HEADER_LEN <= length <= _MAX_FRAME:
+                    break
+                body = b""
+                if length > MESSAGE_HEADER_LEN:
+                    body = await reader.readexactly(length - MESSAGE_HEADER_LEN)
+                try:
+                    msg = decode_message(header + body)
+                except MessageDecodeError:
+                    log.warning("emulator: undecodable frame, dropping connection")
+                    break
+                await self._handle_message(msg)
+        except (asyncio.IncompleteReadError, ConnectionError, OSError):
+            pass
+        finally:
+            self._stop_reporting()
+            self._writer = None
+            with contextlib.suppress(Exception):
+                writer.close()
+
+    async def _send_connection_event(self, writer: asyncio.StreamWriter, status: int) -> None:
+        event = messages.READER_EVENT_NOTIFICATION(
+            reader_event_notification_data=params.ReaderEventNotificationData(
+                timestamp=params.UTCTimestamp(microseconds=self._now_us()),
+                connection_attempt_event=params.ConnectionAttemptEvent(status=status),
+            )
+        )
+        writer.write(event.to_bytes(message_id=0))
+        await writer.drain()
+
+    async def _send(self, msg: LLRPMessage, *, message_id: int = 0) -> None:
+        writer = self._writer
+        if writer is None:
+            return
+        async with self._send_lock:
+            try:
+                writer.write(msg.to_bytes(message_id=message_id))
+                await writer.drain()
+            except (ConnectionError, OSError):  # client went away mid-send
+                self._stop_reporting()
+
+    @staticmethod
+    def _now_us() -> int:
+        return int(time.time() * 1_000_000)
+
+    @staticmethod
+    def _status_ok() -> params.LLRPStatus:
+        return params.LLRPStatus(status_code=enums.StatusCode.M_Success)
+
+    @staticmethod
+    def _status_error(code: int, description: str) -> params.LLRPStatus:
+        return params.LLRPStatus(status_code=code, error_description=description)
+
+    # -- message handling --------------------------------------------------
+
+    async def _handle_message(self, msg: LLRPMessage) -> None:
+        if type(msg) in self._drop_once:
+            self._drop_once.discard(type(msg))
+            return
+        mid = msg.message_id
+        if isinstance(msg, messages.KEEPALIVE_ACK):
+            self._keepalive_acked.set()
+        elif isinstance(msg, messages.GET_READER_CAPABILITIES):
+            await self._send(self._capabilities_response(), message_id=mid)
+        elif isinstance(msg, impinj.IMPINJ_ENABLE_EXTENSIONS):
+            self._extensions_enabled = True
+            await self._send(
+                impinj.IMPINJ_ENABLE_EXTENSIONS_RESPONSE(llrp_status=self._status_ok()),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.SET_READER_CONFIG):
+            await self._send(
+                messages.SET_READER_CONFIG_RESPONSE(llrp_status=self._status_ok()),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.GET_READER_CONFIG):
+            await self._send(
+                messages.GET_READER_CONFIG_RESPONSE(llrp_status=self._status_ok()),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.ADD_ROSPEC):
+            await self._send(
+                messages.ADD_ROSPEC_RESPONSE(llrp_status=self._add_rospec(msg.ro_spec)),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.ENABLE_ROSPEC):
+            status = self._set_rospec_state(msg.ro_spec_id, "Disabled", "Enabled")
+            await self._send(messages.ENABLE_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
+        elif isinstance(msg, messages.DISABLE_ROSPEC):
+            status = self._set_rospec_state(msg.ro_spec_id, "Enabled", "Disabled")
+            await self._send(messages.DISABLE_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
+        elif isinstance(msg, messages.START_ROSPEC):
+            status = self._set_rospec_state(msg.ro_spec_id, "Enabled", "Active")
+            self._sync_reporting()
+            await self._send(messages.START_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
+        elif isinstance(msg, messages.STOP_ROSPEC):
+            status = self._set_rospec_state(msg.ro_spec_id, "Active", "Enabled")
+            self._sync_reporting()
+            await self._send(messages.STOP_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
+        elif isinstance(msg, messages.DELETE_ROSPEC):
+            if msg.ro_spec_id in self._rospecs:
+                del self._rospecs[msg.ro_spec_id]
+                status = self._status_ok()
+            else:
+                status = self._status_error(
+                    enums.StatusCode.M_ParameterError, f"no ROSpec {msg.ro_spec_id}"
+                )
+            self._sync_reporting()
+            await self._send(messages.DELETE_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
+        elif isinstance(msg, messages.GET_ROSPECS):
+            specs = []
+            for spec, state in self._rospecs.values():
+                spec.current_state = getattr(enums.ROSpecState, state)
+                specs.append(spec)
+            await self._send(
+                messages.GET_ROSPECS_RESPONSE(llrp_status=self._status_ok(), ro_specs=specs),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.CLOSE_CONNECTION):
+            await self._send(
+                messages.CLOSE_CONNECTION_RESPONSE(llrp_status=self._status_ok()),
+                message_id=mid,
+            )
+            if self._writer is not None:
+                with contextlib.suppress(Exception):
+                    self._writer.close()
+        else:
+            await self._send(
+                messages.ERROR_MESSAGE(
+                    llrp_status=self._status_error(
+                        enums.StatusCode.M_UnsupportedMessage,
+                        f"emulator does not handle {type(msg).__name__}",
+                    )
+                ),
+                message_id=mid,
+            )
+
+    def _add_rospec(self, rospec: params.ROSpec) -> params.LLRPStatus:
+        if rospec.ro_spec_id in self._rospecs:
+            return self._status_error(
+                enums.StatusCode.M_DuplicateParameter, f"ROSpec {rospec.ro_spec_id} exists"
+            )
+        self._rospecs[rospec.ro_spec_id] = (rospec, "Disabled")
+        return self._status_ok()
+
+    def _set_rospec_state(self, ro_spec_id: int, expected: str, new: str) -> params.LLRPStatus:
+        entry = self._rospecs.get(ro_spec_id)
+        if entry is None:
+            return self._status_error(enums.StatusCode.M_ParameterError, f"no ROSpec {ro_spec_id}")
+        spec, state = entry
+        if state != expected:
+            return self._status_error(
+                enums.StatusCode.M_ParameterError,
+                f"ROSpec {ro_spec_id} is {state}, expected {expected}",
+            )
+        self._rospecs[ro_spec_id] = (spec, new)
+        return self._status_ok()
+
+    # -- capabilities ------------------------------------------------------
+
+    def _capabilities_response(self) -> messages.GET_READER_CAPABILITIES_RESPONSE:
+        gdc = params.GeneralDeviceCapabilities(
+            max_number_of_antenna_supported=self.antenna_count,
+            can_set_antenna_properties=False,
+            has_utc_clock_capability=True,
+            device_manufacturer_name=IMPINJ_PEN,
+            model_name=self.model_number,
+            reader_firmware_version=self.firmware,
+            receive_sensitivity_table_entrys=[
+                params.ReceiveSensitivityTableEntry(index=1, receive_sensitivity_value=0)
+            ],
+            gpio_capabilities=params.GPIOCapabilities(num_gp_is=4, num_gp_os=4),
+            per_antenna_air_protocols=[
+                params.PerAntennaAirProtocol(
+                    antenna_id=i, protocol_id=bytes([enums.AirProtocols.EPCGlobalClass1Gen2])
+                )
+                for i in range(1, self.antenna_count + 1)
+            ],
+        )
+        llrp_caps = params.LLRPCapabilities(
+            can_do_rf_survey=False,
+            can_report_buffer_fill_warning=True,
+            supports_client_request_op_spec=False,
+            can_do_tag_inventory_state_aware_singulation=False,
+            supports_event_and_report_holding=True,
+            max_num_priority_levels_supported=1,
+            client_request_op_spec_timeout=0,
+            max_num_ro_specs=4,
+            max_num_specs_per_ro_spec=4,
+            max_num_inventory_parameter_specs_per_ai_spec=4,
+            max_num_access_specs=8,
+            max_num_op_specs_per_access_spec=8,
+        )
+        # Power table: indices 1..21 covering 10.0 .. 30.0 dBm in 1 dB steps.
+        powers = [
+            params.TransmitPowerLevelTableEntry(index=i, transmit_power_value=1000 + (i - 1) * 100)
+            for i in range(1, 22)
+        ]
+        # A plausible Impinj-flavored RF mode table: fixed modes plus AutoSet ids.
+        mode_rows = [
+            (0, 0, 640000),  # "max throughput"-ish: FM0
+            (1, 1, 640000),  # Miller-2 hybrid
+            (2, 2, 274000),  # dense reader M4
+            (3, 3, 170600),  # dense reader M8
+            (1002, 2, 274000),  # AutoSet family
+            (1003, 2, 274000),
+        ]
+        mode_entries = [
+            params.C1G2UHFRFModeTableEntry(
+                mode_identifier=mode_id,
+                dr_value=True,  # DR 64/3
+                epchagtc_conformance=False,
+                m_value=m,
+                forward_link_modulation=0,
+                spectral_mask_indicator=2,
+                bdr_value=bdr,
+                pie_value=1500,
+                min_tari_value=6250,
+                max_tari_value=25000,
+                step_tari_value=1875,
+            )
+            for mode_id, m, bdr in mode_rows
+        ]
+        uhf = params.UHFBandCapabilities(
+            transmit_power_level_table_entrys=powers,
+            frequency_information=params.FrequencyInformation(
+                hopping=True,
+                frequency_hop_tables=[
+                    params.FrequencyHopTable(
+                        hop_table_id=1,
+                        frequency=[902_750 + 500 * i for i in range(50)],
+                    )
+                ],
+            ),
+            air_protocol_uhfrf_mode_tables=[
+                params.C1G2UHFRFModeTable(c1_g2_uhfrf_mode_table_entrys=mode_entries)
+            ],
+        )
+        return messages.GET_READER_CAPABILITIES_RESPONSE(
+            llrp_status=self._status_ok(),
+            general_device_capabilities=gdc,
+            llrp_capabilities=llrp_caps,
+            regulatory_capabilities=params.RegulatoryCapabilities(
+                country_code=840, communications_standard=1, uhf_band_capabilities=uhf
+            ),
+        )
+
+    # -- tag reporting -----------------------------------------------------
+
+    def _sync_reporting(self) -> None:
+        active = any(state == "Active" for _, state in self._rospecs.values())
+        if active and self._report_task is None:
+            self._report_task = asyncio.get_running_loop().create_task(self._report_loop())
+        elif not active:
+            self._stop_reporting()
+
+    def _stop_reporting(self) -> None:
+        if self._report_task is not None:
+            self._report_task.cancel()
+            self._report_task = None
+
+    def _active_antennas_and_content(self) -> tuple[set[int], set[str]]:
+        antennas: set[int] = set()
+        content: set[str] = set()
+        for spec, state in self._rospecs.values():
+            if state != "Active":
+                continue
+            for sp in spec.spec_parameters:
+                if isinstance(sp, params.AISpec):
+                    ids = set(sp.antenna_ids)
+                    if 0 in ids or not ids:
+                        antennas.update(range(1, self.antenna_count + 1))
+                    else:
+                        antennas.update(ids)
+            report = spec.ro_report_spec
+            if report is not None and self._extensions_enabled:
+                for custom in report.custom:
+                    if isinstance(custom, impinj.ImpinjTagReportContentSelector):
+                        if custom.impinj_enable_peak_rssi is not None:
+                            content.add("rssi")
+                        if custom.impinj_enable_rf_phase_angle is not None:
+                            content.add("phase")
+                        if custom.impinj_enable_rf_doppler_frequency is not None:
+                            content.add("doppler")
+                        if custom.impinj_enable_serialized_t_id is not None:
+                            content.add("tid")
+        return antennas, content
+
+    async def _report_loop(self) -> None:
+        interval = 1.0 / self.reads_per_sec
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                antennas, content = self._active_antennas_and_content()
+                visible = [t for t in self.tags if antennas.intersection(t.antennas)]
+                if not visible:
+                    continue
+                tag = self._rng.choices(visible, weights=[t.weight for t in visible])[0]
+                antenna = self._rng.choice(sorted(antennas.intersection(tag.antennas)))
+                rssi = tag.rssi_dbm + self._rng.gauss(0.0, 1.5)
+                now = self._now_us()
+                trd = params.TagReportData(
+                    epc_parameter=params.EPC_96(epc=tag.epc)
+                    if len(tag.epc) == 12
+                    else params.EPCData(epc=BitStr.from_bytes(tag.epc)),
+                    antenna_id=params.AntennaID(antenna_id=antenna),
+                    peak_rssi=params.PeakRSSI(peak_rssi=max(-128, min(127, round(rssi)))),
+                    channel_index=params.ChannelIndex(channel_index=self._rng.randint(1, 50)),
+                    first_seen_timestamp_utc=params.FirstSeenTimestampUTC(microseconds=now),
+                    last_seen_timestamp_utc=params.LastSeenTimestampUTC(microseconds=now),
+                    tag_seen_count=params.TagSeenCount(tag_count=1),
+                )
+                if "rssi" in content:
+                    trd.custom.append(impinj.ImpinjPeakRSSI(rssi=round(rssi * 100)))
+                if "phase" in content:
+                    trd.custom.append(
+                        impinj.ImpinjRFPhaseAngle(phase_angle=self._rng.randint(0, 4095))
+                    )
+                if "doppler" in content:
+                    trd.custom.append(
+                        impinj.ImpinjRFDopplerFrequency(
+                            doppler_frequency=self._rng.randint(-320, 320)
+                        )
+                    )
+                if "tid" in content:
+                    tid = b"\xe2\x80\x11\x05" + tag.epc[-8:]
+                    words = [int.from_bytes(tid[i : i + 2], "big") for i in range(0, len(tid), 2)]
+                    trd.custom.append(impinj.ImpinjSerializedTID(t_id=words))
+                await self._send(messages.RO_ACCESS_REPORT(tag_report_datas=[trd]))
+        except asyncio.CancelledError:
+            raise
