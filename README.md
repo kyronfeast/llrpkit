@@ -2,13 +2,13 @@
 
 **A modern, typed, asyncio-native Python toolkit for LLRP RAIN RFID readers — built Impinj-first (R700 and Speedway), with a reader emulator, a web dashboard, and a written field guide.**
 
-> 🚧 **Pre-release.** llrpkit is being built in the open toward `v0.1.0`. Already real: the
-> full LLRP 1.0.1 wire protocol with Impinj Octane extensions (golden-vector tested), the
-> asyncio `Reader` with streaming inventory, curated reader-mode guidance (`llrpkit modes`),
-> antenna health monitoring with quiet-port alerts, settings profiles, and an emulator whose
-> behavior *responds to tuning* — switch to Dense Reader M8 and watch the read rate drop,
-> enable TagFocus and watch the population go quiet after first reads. No hardware required.
-> The web dashboard lands next.
+> 🚧 **Pre-release.** llrpkit is being built in the open toward `v0.1.0`, and the whole
+> stack is now real: the full LLRP 1.0.1 wire protocol with Impinj Octane extensions
+> (golden-vector tested), the asyncio `Reader` with streaming inventory, curated
+> reader-mode guidance, antenna health monitoring with quiet-port alerts, a tuning-responsive
+> emulator, and the **web dashboard** — `llrpkit demo` gives you all of it against an
+> emulated reader in one command, no hardware required. Docs polish and the v0.1.0
+> release are what remain.
 
 ## Why
 
@@ -32,13 +32,25 @@ llrpkit exists to close all of that at once:
 ## Try it in sixty seconds (no reader required)
 
 ```console
-$ pip install -e .
+$ pip install -e ".[dashboard]"
+$ llrpkit demo
+llrpkit demo — emulated reader + live dashboard → http://127.0.0.1:8000
+```
+
+![The llrpkit dashboard streaming live tags from the emulated reader](docs/img/dashboard-live.png)
+
+Live tag stream, antenna health cards with quiet-port alerts, and a tuning
+workbench where changing the RF mode or enabling TagFocus visibly changes what
+you see — all against the built-in emulator. Prefer the terminal?
+
+```console
 $ llrpkit emulate --port 5084 &      # a fake Impinj-style reader
 $ llrpkit inventory 127.0.0.1 --search-mode tagfocus --phase --count 5
 connected: model 700, firmware 'llrpkit-emu 0.1', 4 antenna ports (Octane extensions on)
 e2000017010b016210000002  ant 3   -52.06 dBm  phase  340.0°
 ...
-$ llrpkit capabilities 127.0.0.1     # power table, RF modes, antenna ports
+$ llrpkit modes 127.0.0.1            # the RF mode table, with curated guidance
+$ llrpkit capabilities 127.0.0.1     # power table, antenna ports, temperature
 ```
 
 ## The API

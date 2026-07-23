@@ -8,6 +8,17 @@ All notable changes to llrpkit are documented in this file. The format follows
 
 ### Added
 
+- Web dashboard (Phase 4), behind the ``dashboard`` extra: a FastAPI +
+  WebSocket app with four views — live tag stream with stat tiles and a
+  rolling read-rate chart, per-antenna health cards with sparklines and the
+  alert log, a tuning workbench (session/search-mode/RF-mode/power with the
+  curated guidance inline, mode suggestions, and settings profiles), and
+  reader management. The UI is dependency-free vanilla JS with hand-rolled
+  SVG charts — no build step, static files ship inside the wheel.
+- `llrpkit demo`: emulator + dashboard + a running inventory in one command —
+  the complete zero-hardware experience. `llrpkit dashboard` runs the same
+  app for real readers (binds to localhost by default).
+
 - Tuning and health layer (Phase 3). `llrpkit.modes`: curated knowledge for
   the Impinj mode identifiers (fixed 0-5 and the AutoSet families) joined at
   runtime with the RFModeTable the connected reader actually reports, plus a
