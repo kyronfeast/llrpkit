@@ -157,6 +157,40 @@ def inventory(
         )
 
 
+async def _run_modes(host: str, port: int, dense: bool, fast: bool) -> None:
+    from llrpkit.modes import suggest_mode
+    from llrpkit.reader import Reader
+
+    async with Reader(host, port) as reader:
+        annotated = reader.annotated_modes()
+        typer.echo(f"{len(annotated)} RF modes reported by {host}:\n")
+        for mode in annotated:
+            rf = mode.rf
+            miller = "FM0" if rf.m_value == 0 else f"Miller-{2**rf.m_value}"
+            tag = "autoset" if mode.is_autoset else "fixed"
+            typer.echo(
+                f"mode {mode.mode_id:>5}  {mode.name}  [{tag}, {miller}, {rf.bdr_value} bps]"
+            )
+            typer.echo(f"       {mode.summary}\n")
+        pick, reason = suggest_mode(
+            reader.capabilities.modes, dense_environment=dense, prioritize_speed=fast
+        )
+        typer.echo(f"suggestion: mode {pick.mode_id} ({pick.name}) — {reason}")
+
+
+@app.command()
+def modes(
+    host: Annotated[str, typer.Argument(help="Reader hostname or IP.")],
+    port: Annotated[int, typer.Option(help="LLRP port.")] = 5084,
+    dense: Annotated[
+        bool, typer.Option(help="Suggest for a dense multi-reader environment.")
+    ] = False,
+    fast: Annotated[bool, typer.Option(help="Suggest prioritizing throughput.")] = False,
+) -> None:
+    """Show the reader's RF mode table with llrpkit's curated guidance."""
+    asyncio.run(_run_modes(host, port, dense, fast))
+
+
 async def _run_capabilities(host: str, port: int) -> None:
     from llrpkit.reader import Reader
 
@@ -175,7 +209,10 @@ async def _run_capabilities(host: str, port: int) -> None:
                 f"transmit power    {lo:.2f} to {hi:.2f} dBm ({len(caps.transmit_powers)} steps)"
             )
         typer.echo(f"frequencies       {'hopping' if caps.hopping else 'fixed'}")
-        typer.echo(f"RF modes          {len(caps.modes)}")
+        temperature = await reader.get_temperature()
+        if temperature is not None:
+            typer.echo(f"temperature       {temperature:.0f} °C")
+        typer.echo(f"RF modes          {len(caps.modes)}  (see `llrpkit modes`)")
         for m in caps.modes:
             miller = 2**m.m_value if m.m_value else "FM0"
             typer.echo(f"  mode {m.mode_id:>5}  M={miller}  BDR={m.bdr_value} bps")
