@@ -31,6 +31,20 @@ log = logging.getLogger(__name__)
 
 _MAX_FRAME = 4 * 1024 * 1024
 
+#: How the RF mode index scales the synthetic read rate: FM0-style modes are
+#: fast, dense-reader Miller-8 is slow, AutoSet families sit in between.
+_MODE_RATE_FACTORS = {0: 1.6, 1: 1.25, 2: 1.0, 3: 0.55, 4: 1.4, 5: 1.0}
+
+
+@dataclass(frozen=True)
+class _ScanProfile:
+    """Digest of what the active ROSpecs ask the 'RF front end' to do."""
+
+    antennas: set[int]
+    content: set[str]
+    rate_factor: float
+    tagfocus: bool
+
 
 @dataclass(frozen=True)
 class EmulatedTag:
@@ -97,8 +111,14 @@ class LLRPEmulator:
         self._extensions_enabled = False
         self._rospecs: dict[int, tuple[params.ROSpec, str]] = {}
         self._report_task: asyncio.Task[None] | None = None
+        self._keepalive_task: asyncio.Task[None] | None = None
         self._keepalive_acked = asyncio.Event()
+        #: KEEPALIVE_ACKs received from the client (test observability).
+        self.keepalive_acks = 0
         self._drop_once: set[type[LLRPMessage]] = set()
+        self._temperature = 41.5
+        self._disconnected: set[int] = set()
+        self._focus_counts: dict[bytes, int] = {}
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -108,6 +128,7 @@ class LLRPEmulator:
 
     async def stop(self) -> None:
         self._stop_reporting()
+        self._stop_keepalive()
         if self._writer is not None:
             with contextlib.suppress(Exception):
                 self._writer.close()
@@ -137,6 +158,32 @@ class LLRPEmulator:
     async def wait_keepalive_ack(self, timeout: float = 2.0) -> None:
         await asyncio.wait_for(self._keepalive_acked.wait(), timeout)
 
+    def set_temperature(self, celsius: float) -> None:
+        """Set the temperature reported via the Octane extension."""
+        self._temperature = celsius
+
+    async def set_antenna_connected(self, antenna_id: int, connected: bool) -> None:
+        """Fault injection: (dis)connect an antenna port and notify the client.
+
+        A disconnected port stops producing tag reads, exactly like a cable
+        pulled from a live reader, and the client receives the corresponding
+        ``AntennaEvent`` notification.
+        """
+        if connected:
+            self._disconnected.discard(antenna_id)
+            event_type = enums.AntennaEventType.Antenna_Connected
+        else:
+            self._disconnected.add(antenna_id)
+            event_type = enums.AntennaEventType.Antenna_Disconnected
+        await self._send(
+            messages.READER_EVENT_NOTIFICATION(
+                reader_event_notification_data=params.ReaderEventNotificationData(
+                    timestamp=params.UTCTimestamp(microseconds=self._now_us()),
+                    antenna_event=params.AntennaEvent(event_type=event_type, antenna_id=antenna_id),
+                )
+            )
+        )
+
     # -- connection handling -----------------------------------------------
 
     async def _handle_client(
@@ -154,6 +201,8 @@ class LLRPEmulator:
         self._writer = writer
         self._extensions_enabled = False
         self._rospecs = {}
+        self._disconnected = set()
+        self._focus_counts = {}
         await self._send_connection_event(writer, enums.ConnectionAttemptStatusType.Success)
         try:
             while True:
@@ -174,6 +223,7 @@ class LLRPEmulator:
             pass
         finally:
             self._stop_reporting()
+            self._stop_keepalive()
             self._writer = None
             with contextlib.suppress(Exception):
                 writer.close()
@@ -219,6 +269,7 @@ class LLRPEmulator:
             return
         mid = msg.message_id
         if isinstance(msg, messages.KEEPALIVE_ACK):
+            self.keepalive_acks += 1
             self._keepalive_acked.set()
         elif isinstance(msg, messages.GET_READER_CAPABILITIES):
             await self._send(self._capabilities_response(), message_id=mid)
@@ -229,15 +280,19 @@ class LLRPEmulator:
                 message_id=mid,
             )
         elif isinstance(msg, messages.SET_READER_CONFIG):
+            if msg.keepalive_spec is not None:
+                self._apply_keepalive_spec(msg.keepalive_spec)
             await self._send(
                 messages.SET_READER_CONFIG_RESPONSE(llrp_status=self._status_ok()),
                 message_id=mid,
             )
         elif isinstance(msg, messages.GET_READER_CONFIG):
-            await self._send(
-                messages.GET_READER_CONFIG_RESPONSE(llrp_status=self._status_ok()),
-                message_id=mid,
-            )
+            response = messages.GET_READER_CONFIG_RESPONSE(llrp_status=self._status_ok())
+            if self._extensions_enabled and self._temperature_requested(msg):
+                response.custom.append(
+                    impinj.ImpinjReaderTemperature(temperature=round(self._temperature))
+                )
+            await self._send(response, message_id=mid)
         elif isinstance(msg, messages.ADD_ROSPEC):
             await self._send(
                 messages.ADD_ROSPEC_RESPONSE(llrp_status=self._add_rospec(msg.ro_spec)),
@@ -251,6 +306,7 @@ class LLRPEmulator:
             await self._send(messages.DISABLE_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
         elif isinstance(msg, messages.START_ROSPEC):
             status = self._set_rospec_state(msg.ro_spec_id, "Enabled", "Active")
+            self._focus_counts = {}  # fresh TagFocus suppression state per run
             self._sync_reporting()
             await self._send(messages.START_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
         elif isinstance(msg, messages.STOP_ROSPEC):
@@ -294,6 +350,42 @@ class LLRPEmulator:
                 ),
                 message_id=mid,
             )
+
+    def _temperature_requested(self, msg: messages.GET_READER_CONFIG) -> bool:
+        if int(msg.requested_data) == int(enums.GetReaderConfigRequestedData.All):
+            return True
+        wanted = {
+            int(impinj.ImpinjRequestedDataType.All_Configuration),
+            int(impinj.ImpinjRequestedDataType.Impinj_Reader_Temperature),
+        }
+        return any(
+            isinstance(p, impinj.ImpinjRequestedData) and int(p.requested_data) in wanted
+            for p in msg.custom
+        )
+
+    def _apply_keepalive_spec(self, spec: params.KeepaliveSpec) -> None:
+        self._stop_keepalive()
+        if (
+            int(spec.keepalive_trigger_type) == int(enums.KeepaliveTriggerType.Periodic)
+            and spec.periodic_trigger_value > 0
+        ):
+            period_s = spec.periodic_trigger_value / 1000.0
+            self._keepalive_task = asyncio.get_running_loop().create_task(
+                self._keepalive_loop(period_s)
+            )
+
+    def _stop_keepalive(self) -> None:
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            self._keepalive_task = None
+
+    async def _keepalive_loop(self, period_s: float) -> None:
+        try:
+            while True:
+                await asyncio.sleep(period_s)
+                await self._send(messages.KEEPALIVE(), message_id=98)
+        except asyncio.CancelledError:
+            raise
 
     def _add_rospec(self, rospec: params.ROSpec) -> params.LLRPStatus:
         if rospec.ro_spec_id in self._rospecs:
@@ -419,43 +511,83 @@ class LLRPEmulator:
             self._report_task.cancel()
             self._report_task = None
 
-    def _active_antennas_and_content(self) -> tuple[set[int], set[str]]:
+    def _scan_profile(self) -> _ScanProfile:
+        """What the active ROSpecs ask for, digested for the report loop.
+
+        This is where tuning becomes visible behavior: the RF mode index
+        scales the read rate (FM0-ish modes fast, Miller-8 slow), and
+        TagFocus (search mode 3 in session 1) suppresses tags after their
+        first few sightings — just like the real feature exists to do.
+        """
         antennas: set[int] = set()
         content: set[str] = set()
+        rate_factor = 1.0
+        tagfocus = False
         for spec, state in self._rospecs.values():
             if state != "Active":
                 continue
             for sp in spec.spec_parameters:
-                if isinstance(sp, params.AISpec):
-                    ids = set(sp.antenna_ids)
-                    if 0 in ids or not ids:
-                        antennas.update(range(1, self.antenna_count + 1))
-                    else:
-                        antennas.update(ids)
+                if not isinstance(sp, params.AISpec):
+                    continue
+                ids = set(sp.antenna_ids)
+                if 0 in ids or not ids:
+                    antennas.update(range(1, self.antenna_count + 1))
+                else:
+                    antennas.update(ids)
+                for inv_spec in sp.inventory_parameter_specs:
+                    for cfg in inv_spec.antenna_configurations:
+                        for cmd in cfg.air_protocol_inventory_command_settings:
+                            session = 1
+                            if cmd.c1_g2_singulation_control is not None:
+                                session = int(cmd.c1_g2_singulation_control.session)
+                            if cmd.c1_g2_rf_control is not None:
+                                rate_factor = _MODE_RATE_FACTORS.get(
+                                    cmd.c1_g2_rf_control.mode_index, 1.0
+                                )
+                            for custom in cmd.custom:
+                                if (
+                                    isinstance(custom, impinj.ImpinjInventorySearchMode)
+                                    and int(custom.inventory_search_mode) == 3
+                                    and session == 1
+                                ):
+                                    tagfocus = True
             report = spec.ro_report_spec
             if report is not None and self._extensions_enabled:
-                for custom in report.custom:
-                    if isinstance(custom, impinj.ImpinjTagReportContentSelector):
-                        if custom.impinj_enable_peak_rssi is not None:
+                for custom_param in report.custom:
+                    if isinstance(custom_param, impinj.ImpinjTagReportContentSelector):
+                        if custom_param.impinj_enable_peak_rssi is not None:
                             content.add("rssi")
-                        if custom.impinj_enable_rf_phase_angle is not None:
+                        if custom_param.impinj_enable_rf_phase_angle is not None:
                             content.add("phase")
-                        if custom.impinj_enable_rf_doppler_frequency is not None:
+                        if custom_param.impinj_enable_rf_doppler_frequency is not None:
                             content.add("doppler")
-                        if custom.impinj_enable_serialized_t_id is not None:
+                        if custom_param.impinj_enable_serialized_t_id is not None:
                             content.add("tid")
-        return antennas, content
+        antennas -= self._disconnected
+        return _ScanProfile(antennas, content, rate_factor, tagfocus)
 
     async def _report_loop(self) -> None:
-        interval = 1.0 / self.reads_per_sec
         try:
             while True:
-                await asyncio.sleep(interval)
-                antennas, content = self._active_antennas_and_content()
+                profile = self._scan_profile()
+                rate = max(1.0, self.reads_per_sec * profile.rate_factor)
+                await asyncio.sleep(1.0 / rate)
+                antennas, content = profile.antennas, profile.content
                 visible = [t for t in self.tags if antennas.intersection(t.antennas)]
                 if not visible:
                     continue
+                if profile.tagfocus:
+                    # TagFocus: once a tag has answered a few times it stays
+                    # suppressed (S1 flag held), so the field goes quiet apart
+                    # from occasional persistence lapses.
+                    fresh = [t for t in visible if self._focus_counts.get(t.epc, 0) < 3]
+                    if fresh:
+                        visible = fresh
+                    elif self._rng.random() > 0.02:
+                        continue
                 tag = self._rng.choices(visible, weights=[t.weight for t in visible])[0]
+                if profile.tagfocus:
+                    self._focus_counts[tag.epc] = self._focus_counts.get(tag.epc, 0) + 1
                 antenna = self._rng.choice(sorted(antennas.intersection(tag.antennas)))
                 rssi = tag.rssi_dbm + self._rng.gauss(0.0, 1.5)
                 now = self._now_us()
