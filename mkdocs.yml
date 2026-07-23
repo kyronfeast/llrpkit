@@ -33,5 +33,14 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
-  - Field guide: field-guide/index.md
+  - Examples: examples.md
+  - Field guide:
+      - Overview: field-guide/index.md
+      - LLRP in plain English: field-guide/llrp-basics.md
+      - Sessions & targets: field-guide/sessions-and-targets.md
+      - Reader modes: field-guide/reader-modes.md
+      - TagFocus & TID: field-guide/tagfocus-and-tid.md
+      - Antenna health: field-guide/antenna-health.md
+      - R700 onboarding: field-guide/r700-onboarding.md
+  - API tour: api.md
   - Contributing: contributing.md
