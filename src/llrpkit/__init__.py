@@ -12,6 +12,7 @@ around.
 """
 
 from llrpkit.__about__ import __version__
+from llrpkit.client import LLRPClient
 from llrpkit.constants import (
     IMPINJ_PEN,
     LLRP_PORT,
@@ -28,6 +29,8 @@ from llrpkit.exceptions import (
     MessageDecodeError,
     MessageEncodeError,
 )
+from llrpkit.inventory import TagReport
+from llrpkit.reader import Reader, ReaderCapabilities, RFMode
 
 __all__ = [
     "IMPINJ_PEN",
@@ -35,6 +38,7 @@ __all__ = [
     "LLRP_TLS_PORT",
     "MESSAGE_HEADER_LEN",
     "CapabilityError",
+    "LLRPClient",
     "LLRPConnectionError",
     "LLRPError",
     "LLRPStatusError",
@@ -42,5 +46,9 @@ __all__ = [
     "LLRPVersion",
     "MessageDecodeError",
     "MessageEncodeError",
+    "RFMode",
+    "Reader",
+    "ReaderCapabilities",
+    "TagReport",
     "__version__",
 ]
