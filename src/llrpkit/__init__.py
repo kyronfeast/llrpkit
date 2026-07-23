@@ -29,7 +29,10 @@ from llrpkit.exceptions import (
     MessageDecodeError,
     MessageEncodeError,
 )
+from llrpkit.health import HealthAlert, HealthMonitor
 from llrpkit.inventory import TagReport
+from llrpkit.modes import AnnotatedMode, ModeGuidance, annotate_modes, suggest_mode
+from llrpkit.profiles import InventoryProfile
 from llrpkit.reader import Reader, ReaderCapabilities, RFMode
 
 __all__ = [
@@ -37,7 +40,11 @@ __all__ = [
     "LLRP_PORT",
     "LLRP_TLS_PORT",
     "MESSAGE_HEADER_LEN",
+    "AnnotatedMode",
     "CapabilityError",
+    "HealthAlert",
+    "HealthMonitor",
+    "InventoryProfile",
     "LLRPClient",
     "LLRPConnectionError",
     "LLRPError",
@@ -46,9 +53,12 @@ __all__ = [
     "LLRPVersion",
     "MessageDecodeError",
     "MessageEncodeError",
+    "ModeGuidance",
     "RFMode",
     "Reader",
     "ReaderCapabilities",
     "TagReport",
     "__version__",
+    "annotate_modes",
+    "suggest_mode",
 ]

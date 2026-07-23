@@ -19,12 +19,16 @@ import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from llrpkit.modes import AnnotatedMode
 
 from llrpkit.client import LLRPClient, check_status
 from llrpkit.constants import IMPINJ_PEN, LLRP_PORT
 from llrpkit.exceptions import CapabilityError, LLRPConnectionError, LLRPError
 from llrpkit.inventory import DEFAULT_ROSPEC_ID, TagReport, build_rospec
-from llrpkit.protocol import enums, impinj, messages, params
+from llrpkit.protocol import LLRPMessage, enums, impinj, messages, params
 
 
 @dataclass(frozen=True)
@@ -216,6 +220,71 @@ class Reader:
         )
         assert isinstance(response, messages.GET_READER_CONFIG_RESPONSE)
         return response
+
+    def annotated_modes(self) -> list[AnnotatedMode]:
+        """The reader's RF mode table joined with llrpkit's curated guidance."""
+        from llrpkit.modes import annotate_modes  # runtime import: modes builds on reader
+
+        return list(annotate_modes(self.capabilities.modes))
+
+    async def set_keepalive(self, period_ms: int | None) -> None:
+        """Ask the reader to send periodic ``KEEPALIVE``s; ``None`` disables.
+
+        The client acknowledges them automatically, so enabling this gives
+        both ends liveness detection for long-running sessions.
+        """
+        if period_ms is None:
+            spec = params.KeepaliveSpec(
+                keepalive_trigger_type=enums.KeepaliveTriggerType.Null,
+                periodic_trigger_value=0,
+            )
+        else:
+            spec = params.KeepaliveSpec(
+                keepalive_trigger_type=enums.KeepaliveTriggerType.Periodic,
+                periodic_trigger_value=period_ms,
+            )
+        check_status(
+            await self.client.transact(
+                messages.SET_READER_CONFIG(reset_to_factory_default=False, keepalive_spec=spec)
+            )
+        )
+
+    async def get_temperature(self) -> float | None:
+        """Reader temperature in °C via the Octane extension; None if unavailable."""
+        if not self._impinj_enabled:
+            return None
+        request = messages.GET_READER_CONFIG(
+            antenna_id=0,
+            requested_data=enums.GetReaderConfigRequestedData.All,
+            gpi_port_num=0,
+            gpo_port_num=0,
+        )
+        request.custom.append(
+            impinj.ImpinjRequestedData(
+                requested_data=impinj.ImpinjRequestedDataType.Impinj_Reader_Temperature
+            )
+        )
+        response = check_status(await self.client.transact(request))
+        assert isinstance(response, messages.GET_READER_CONFIG_RESPONSE)
+        for p in response.custom:
+            if isinstance(p, impinj.ImpinjReaderTemperature):
+                return float(p.temperature)
+        return None
+
+    async def events(self) -> AsyncGenerator[LLRPMessage, None]:
+        """Unsolicited reader notifications (antenna events, exceptions, ...).
+
+        Ends when the connection closes. Feed these to
+        :class:`llrpkit.health.HealthMonitor.handle_event` for health tracking.
+        """
+        while True:
+            try:
+                msg = await asyncio.wait_for(self.client.events.get(), 0.25)
+            except TimeoutError:
+                if not self.client.connected:
+                    return
+                continue
+            yield msg
 
     # -- inventory ---------------------------------------------------------
 
