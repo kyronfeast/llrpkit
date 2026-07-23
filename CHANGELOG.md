@@ -9,7 +9,40 @@ All notable changes to llrpkit are documented in this file. The format follows
 ## [0.1.0] - 2026-07-23
 
 The first release: the complete stack, built and verified entirely against the
-in-package emulator.
+in-package emulator, then hardened by an adversarial pre-release QA pass
+(findings and evidence in `QA_REPORT.md`).
+
+### Fixed (pre-release QA)
+
+- **Task cancellation could be silently swallowed** by Python 3.11's
+  `asyncio.wait_for` when a report/event was already queued, leaving an
+  inventory stream running forever and deadlocking `stop`. All bounded waits
+  now use `asyncio.timeout`, which always re-raises external cancellation;
+  `transact()`'s bound additionally covers `drain()` so a wedged socket
+  cannot stall a transaction indefinitely. (QA-9)
+- **Dashboard XSS:** reader-supplied strings (firmware, error text), tag
+  EPCs, and user-supplied names are now HTML-escaped before rendering;
+  verified in-browser against a hostile firmware string. (SEC-1)
+- `LLRPClient` lifecycle is now truthful and reusable: `connected` goes
+  `False` after `close()`, and the same client object can reconnect after a
+  clean close, a refused connection, or a failed handshake. Cancelling
+  `connect()` no longer leaks a half-open transport, and `close()` releases
+  the transport even if cancelled mid-goodbye. (QA-1, QA-10)
+- `client.reports`/`client.events` are bounded queues (constructor-tunable)
+  with drop-oldest semantics and `dropped_reports`/`dropped_events`
+  counters, instead of leaking memory when a consumer stalls. (QA-2)
+- Antenna health read-rate no longer silently caps at 256 reads/s per port
+  (timestamp buffer sized for ~2 000 reads/s). (QA-3)
+- The emulator restarts its report loop if the task died, instead of
+  treating a crashed task as alive. (QA-7)
+- `build_rospec()` rejects invalid `session`/`tag_population` with clear
+  `ValueError`s at the API boundary. (QA-8)
+- `ReaderRegistry.remove()` publishes the updated roster even when the LLRP
+  goodbye fails. (QA-4)
+- Test infrastructure: dashboard tests run in-loop via `httpx.ASGITransport`
+  plus one real uvicorn + real-WebSocket end-to-end test (no thread-portal
+  `TestClient`); new hardening and soak suites pin every QA finding; a 90 s
+  per-test watchdog turns any future hang into a stack dump.
 
 ### Added
 
