@@ -6,7 +6,21 @@ All notable changes to llrpkit are documented in this file. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-23
+
+The first release: the complete stack, built and verified entirely against the
+in-package emulator.
+
 ### Added
+
+- Field guide documentation: LLRP in plain English, sessions and targets,
+  reader modes, TagFocus and serialized TID, antenna placement and health,
+  and R700 onboarding with interface-switch steps verified against Impinj's
+  R700 Installation and Operations Guide (v8.1.7).
+- Four runnable examples (`examples/`), each exercised against the emulator
+  in CI: `read_tags.py`, `tagfocus_dock_door.py`, `mode_shootout.py`,
+  `antenna_watch.py`. An API tour page and expanded docs navigation.
+- `RELEASING.md`: the push/Pages/PyPI trusted-publishing runbook.
 
 - Web dashboard (Phase 4), behind the ``dashboard`` extra: a FastAPI +
   WebSocket app with four views — live tag stream with stat tiles and a
