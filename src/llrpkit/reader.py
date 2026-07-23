@@ -279,7 +279,11 @@ class Reader:
         """
         while True:
             try:
-                msg = await asyncio.wait_for(self.client.events.get(), 0.25)
+                # asyncio.timeout, not wait_for: on 3.11 wait_for can swallow a
+                # concurrent Task.cancel() when an event is already queued,
+                # leaving this generator (and its consumer) uncancellable.
+                async with asyncio.timeout(0.25):
+                    msg = await self.client.events.get()
             except TimeoutError:
                 if not self.client.connected:
                     return
@@ -354,7 +358,12 @@ class Reader:
                     return
                 tick = 0.25 if remaining is None else min(0.25, remaining)
                 try:
-                    report = await asyncio.wait_for(client.reports.get(), tick)
+                    # asyncio.timeout, not wait_for: with reports flowing, a
+                    # stop that cancels this stream races the queue being hot;
+                    # 3.11's wait_for would consume the cancellation and the
+                    # stream would run forever (the pre-release QA hang).
+                    async with asyncio.timeout(tick):
+                        report = await client.reports.get()
                 except TimeoutError:
                     if not client.connected:
                         raise LLRPConnectionError("connection lost during inventory") from None

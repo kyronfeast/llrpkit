@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import Final
+from typing import Any, Final
 
 from llrpkit.constants import LLRP_PORT, MESSAGE_HEADER_LEN
 from llrpkit.exceptions import (
@@ -69,15 +69,24 @@ class LLRPClient:
         *,
         response_timeout: float = 5.0,
         connect_timeout: float = 10.0,
+        max_queued_reports: int = 65536,
+        max_queued_events: int = 1024,
     ) -> None:
         self.host = host
         self.port = port
         self._response_timeout = response_timeout
         self._connect_timeout = connect_timeout
-        #: Unsolicited ``RO_ACCESS_REPORT`` messages (tag data).
-        self.reports: asyncio.Queue[messages.RO_ACCESS_REPORT] = asyncio.Queue()
+        #: Unsolicited ``RO_ACCESS_REPORT`` messages (tag data). Bounded: when
+        #: a consumer falls behind, the OLDEST report is dropped and counted.
+        self.reports: asyncio.Queue[messages.RO_ACCESS_REPORT] = asyncio.Queue(
+            maxsize=max_queued_reports
+        )
         #: Unsolicited reader events (notifications, unmatched responses).
-        self.events: asyncio.Queue[LLRPMessage] = asyncio.Queue()
+        #: Bounded like :attr:`reports`.
+        self.events: asyncio.Queue[LLRPMessage] = asyncio.Queue(maxsize=max_queued_events)
+        #: Reports/events discarded because their queue was full.
+        self.dropped_reports = 0
+        self.dropped_events = 0
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._read_task: asyncio.Task[None] | None = None
@@ -94,25 +103,37 @@ class LLRPClient:
         return self._writer is not None and self._close_exc is None
 
     async def connect(self) -> None:
-        """Open the TCP connection and wait for a successful connection event."""
+        """Open the TCP connection and wait for a successful connection event.
+
+        The client is reusable: after :meth:`close` (or a refused/failed
+        attempt) it can connect again with fresh per-connection state.
+        """
         if self._writer is not None:
             raise LLRPError("client is already connected")
+        self._closing = False
+        self._close_exc = None
+        # NOTE: bounded waits here use asyncio.timeout, never asyncio.wait_for.
+        # On Python 3.11 wait_for can swallow an external Task.cancel() that
+        # races with the awaited future completing, silently un-cancelling the
+        # caller (python/cpython#86296); asyncio.timeout re-raises it.
         try:
-            self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), self._connect_timeout
-            )
+            async with asyncio.timeout(self._connect_timeout):
+                self._reader, self._writer = await asyncio.open_connection(self.host, self.port)
         except (OSError, TimeoutError) as exc:
             raise LLRPConnectionError(f"cannot connect to {self.host}:{self.port}: {exc}") from exc
         self._conn_event = asyncio.get_running_loop().create_future()
         self._read_task = asyncio.create_task(self._read_loop(), name=f"llrp-read-{self.host}")
         try:
-            event = await asyncio.wait_for(self._conn_event, self._connect_timeout)
+            async with asyncio.timeout(self._connect_timeout):
+                event = await self._conn_event
         except TimeoutError as exc:
             await self._abort()
             raise LLRPConnectionError(
                 f"{self.host} sent no ConnectionAttemptEvent (is this an LLRP endpoint?)"
             ) from exc
-        except LLRPConnectionError:
+        except BaseException:
+            # Covers LLRPConnectionError from the read loop AND cancellation of
+            # connect() itself: never leave a half-open transport behind.
             await self._abort()
             raise
         if int(event.status) != int(enums.ConnectionAttemptStatusType.Success):
@@ -121,11 +142,14 @@ class LLRPClient:
 
     async def close(self) -> None:
         """Politely close (``CLOSE_CONNECTION``), then tear down the transport."""
-        if self.connected and not self._closing:
-            self._closing = True
-            with contextlib.suppress(LLRPError, OSError):
-                await self.transact(messages.CLOSE_CONNECTION(), timeout=2.0)
-        await self._abort()
+        try:
+            if self.connected and not self._closing:
+                self._closing = True
+                with contextlib.suppress(LLRPError, OSError):
+                    await self.transact(messages.CLOSE_CONNECTION(), timeout=2.0)
+        finally:
+            # Even a cancelled close() must fully release the transport.
+            await self._abort()
 
     async def __aenter__(self) -> LLRPClient:
         await self.connect()
@@ -164,9 +188,13 @@ class LLRPClient:
         self._pending[mid] = fut
         wait = self._response_timeout if timeout is None else timeout
         try:
-            writer.write(msg.to_bytes(message_id=mid))
-            await writer.drain()
-            return await asyncio.wait_for(fut, wait)
+            # One bound over write+drain+response; asyncio.timeout (not
+            # wait_for) so a concurrent Task.cancel() is never swallowed by a
+            # response that lands in the same event-loop tick.
+            async with asyncio.timeout(wait):
+                writer.write(msg.to_bytes(message_id=mid))
+                await writer.drain()
+                return await fut
         except TimeoutError as exc:
             raise LLRPTimeoutError(
                 f"no response to {type(msg).__name__} within {wait:.1f}s"
@@ -213,20 +241,37 @@ class LLRPClient:
                 self.send(messages.KEEPALIVE_ACK(), message_id=msg.message_id)
             return
         if isinstance(msg, messages.RO_ACCESS_REPORT):
-            self.reports.put_nowait(msg)
+            self.dropped_reports += self._offer(self.reports, msg)
             return
         if isinstance(msg, messages.READER_EVENT_NOTIFICATION):
             event = msg.reader_event_notification_data.connection_attempt_event
             if event is not None and self._conn_event is not None and not self._conn_event.done():
                 self._conn_event.set_result(event)
                 return
-            self.events.put_nowait(msg)
+            self.dropped_events += self._offer(self.events, msg)
             return
         fut = self._pending.pop(msg.message_id, None)
         if fut is not None and not fut.done():
             fut.set_result(msg)
         else:
-            self.events.put_nowait(msg)
+            self.dropped_events += self._offer(self.events, msg)
+
+    @staticmethod
+    def _offer(queue: asyncio.Queue[Any], msg: Any) -> int:
+        """Put with drop-oldest semantics; returns the number dropped (0/1)."""
+        dropped = 0
+        while True:
+            try:
+                queue.put_nowait(msg)
+                return dropped
+            except asyncio.QueueFull:
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+                    dropped += 1
+                    if dropped == 1:
+                        log.warning(
+                            "LLRP queue full; dropping oldest entries (consumer is not keeping up)"
+                        )
 
     def _shutdown(self, exc: LLRPConnectionError | None) -> None:
         if self._close_exc is None and exc is not None:
@@ -243,3 +288,7 @@ class LLRPClient:
         if writer is not None:
             with contextlib.suppress(Exception):
                 writer.close()
+        # Clear the transport so `connected` tells the truth and the client
+        # can be reconnected; the read task is reaped by _abort().
+        self._writer = None
+        self._reader = None
