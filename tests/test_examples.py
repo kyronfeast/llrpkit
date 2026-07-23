@@ -48,4 +48,5 @@ def test_examples_exist() -> None:
         "tagfocus_dock_door.py",
         "mode_shootout.py",
         "antenna_watch.py",
+        "mqtt_bridge.py",
     }

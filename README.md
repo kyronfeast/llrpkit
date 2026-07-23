@@ -53,6 +53,19 @@ $ llrpkit modes 127.0.0.1            # the RF mode table, with curated guidance
 $ llrpkit capabilities 127.0.0.1     # power table, antenna ports, temperature
 ```
 
+Feeding an IoT stack instead? With the `mqtt` extra the same inventory
+publishes straight to a broker — JSON tag messages plus a retained
+online/offline status with an MQTT Last Will, while the reader stays in LLRP
+mode with the full tuning control plane:
+
+```console
+$ pip install -e ".[mqtt]"
+$ llrpkit inventory 127.0.0.1 --search-mode tagfocus --mqtt-broker 127.0.0.1
+$ mosquitto_sub -t 'llrpkit/#' -v      # in another terminal
+llrpkit/127.0.0.1/status {"status": "online", ...}
+llrpkit/127.0.0.1/tags {"reader": "127.0.0.1:5084", "epc": "e28011...", "antenna": 3, "rssi_dbm": -52.25, ...}
+```
+
 ## The API
 
 ```python

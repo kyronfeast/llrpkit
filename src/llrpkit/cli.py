@@ -1,8 +1,9 @@
 """llrpkit command-line interface.
 
 Live commands: ``inventory`` and ``capabilities`` speak LLRP to a reader (or
-the emulator); ``emulate`` runs the built-in emulator on a port. The
-``dashboard`` and ``demo`` commands arrive with the web UI phase.
+the emulator); ``emulate`` runs the built-in emulator on a port; ``dashboard``
+and ``demo`` serve the web UI. ``inventory --mqtt-broker`` publishes the tag
+stream to an MQTT broker instead of the terminal (``mqtt`` extra).
 """
 
 from __future__ import annotations
@@ -49,6 +50,63 @@ def main(
 def version() -> None:
     """Show the llrpkit version."""
     typer.echo(f"llrpkit {__version__}")
+
+
+def _parse_broker(value: str) -> tuple[str, int]:
+    """Parse ``host`` or ``host:port`` for --mqtt-broker."""
+    host, _, port_text = value.partition(":")
+    if not host:
+        raise typer.BadParameter(f"broker {value!r} has no hostname")
+    if not port_text:
+        return host, 1883
+    try:
+        return host, int(port_text)
+    except ValueError as exc:
+        raise typer.BadParameter(f"broker port {port_text!r} is not an integer") from exc
+
+
+def _require_mqtt() -> None:
+    try:
+        import aiomqtt  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - depends on install flavor
+        typer.echo('MQTT publishing needs the "mqtt" extra:\n\n    pip install "llrpkit[mqtt]"\n')
+        raise typer.Exit(1) from exc
+
+
+async def _run_inventory_mqtt(
+    host: str,
+    port: int,
+    broker: tuple[str, int],
+    base_topic: str | None,
+    qos: int,
+    username: str | None,
+    password: str | None,
+    inventory_kwargs: dict[str, Any],
+) -> int:
+    from llrpkit.mqtt import MQTTBridge
+    from llrpkit.reader import Reader
+
+    async with Reader(host, port) as reader:
+        typer.echo(
+            f"connected: model {reader.model_number}, firmware {reader.firmware!r}, "
+            f"{reader.max_antennas} antenna ports"
+            + (" (Octane extensions on)" if reader.impinj_extensions_enabled else "")
+        )
+        bridge = MQTTBridge(
+            broker[0],
+            broker[1],
+            base_topic=base_topic if base_topic is not None else f"llrpkit/{host}",
+            username=username,
+            password=password,
+            qos=qos,
+        )
+        typer.echo(
+            f"publishing → mqtt://{broker[0]}:{broker[1]}  "
+            f"tags on {bridge.tags_topic!r}, status on {bridge.status_topic!r}"
+        )
+        published = await bridge.run(reader, **inventory_kwargs)
+    typer.echo(f"{published} tag report(s) published")
+    return published
 
 
 def _parse_antennas(value: str) -> list[int]:
@@ -131,13 +189,61 @@ def inventory(
     tid: Annotated[bool, typer.Option(help="Include serialized TID (Impinj).")] = False,
     duration: Annotated[float | None, typer.Option(help="Stop after this many seconds.")] = None,
     count: Annotated[int | None, typer.Option(help="Stop after this many reports.")] = None,
+    mqtt_broker: Annotated[
+        str | None,
+        typer.Option(
+            help='Publish reads to this MQTT broker ("host" or "host:port") '
+            "instead of the terminal."
+        ),
+    ] = None,
+    mqtt_topic: Annotated[
+        str | None,
+        typer.Option(help="Base MQTT topic (default: llrpkit/<reader-host>)."),
+    ] = None,
+    mqtt_qos: Annotated[int, typer.Option(min=0, max=2, help="QoS for tag messages.")] = 0,
+    mqtt_username: Annotated[str | None, typer.Option(help="MQTT username.")] = None,
+    mqtt_password: Annotated[str | None, typer.Option(help="MQTT password.")] = None,
 ) -> None:
-    """Stream a live tag inventory to the terminal."""
+    """Stream a live tag inventory to the terminal, or to an MQTT broker."""
     if search_mode is not None and search_mode.lower() not in SEARCH_MODES:
         raise typer.BadParameter(f"search mode must be one of {', '.join(SEARCH_MODES)}")
     if duration is None and count is None:
         typer.echo("(no --duration or --count given: streaming until Ctrl-C)")
     mode_value = SEARCH_MODES[search_mode.lower()] if search_mode is not None else None
+    if mqtt_broker is not None:
+        _require_mqtt()
+        import aiomqtt
+
+        inventory_kwargs: dict[str, Any] = {
+            "antennas": _parse_antennas(antennas),
+            "session": session,
+            "search_mode": mode_value,
+            "mode_index": mode,
+            "tx_power_dbm": power,
+            "tag_population": population,
+            "include_phase": phase,
+            "include_tid": tid,
+            "duration": duration,
+            "max_tags": count,
+        }
+        try:
+            with contextlib.suppress(KeyboardInterrupt):
+                asyncio.run(
+                    _run_inventory_mqtt(
+                        host,
+                        port,
+                        _parse_broker(mqtt_broker),
+                        mqtt_topic,
+                        mqtt_qos,
+                        mqtt_username,
+                        mqtt_password,
+                        inventory_kwargs,
+                    )
+                )
+        except aiomqtt.MqttError as exc:
+            typer.echo(f"MQTT error: {exc}")
+            raise typer.Exit(1) from exc
+        return
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(
             _run_inventory(

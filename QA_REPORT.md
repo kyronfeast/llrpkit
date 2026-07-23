@@ -32,6 +32,7 @@ in-package `LLRPEmulator` (no hardware in the loop).
 | QA-4 | Medium | dashboard registry | Verified: cancellation-driven stop must still DELETE the ROSpec on the reader; `remove()` must survive close errors (one robustness fix) | Fixed/verified |
 | QA-5 | Low | emulator | Verified: garbage/port-scanner bytes on the LLRP port neither wedge the emulator nor poison the next session | No defect |
 | QA-6 | Low | `LLRPClient` | Verified: 50 concurrent `transact()` calls correlate responses correctly by message ID | No defect |
+| QA-11 | **High** | `mqtt` bridge | The QA-9 swallow again, one dependency down: aiomqtt acknowledges QoS>0 publishes via `asyncio.wait_for`, so a PUBACK racing `Task.cancel()` made the bridge uncancellable | Fixed |
 | INFRA-1 | — | test infra | Intermittent full-suite hang initially misattributed to Starlette's `TestClient` portal; true cause was QA-9 | Root-caused |
 
 ## Critical finding in detail — QA-9, the cancellation swallow
@@ -90,6 +91,18 @@ now pass through an HTML-escape helper before rendering. Verified in a real
 Chromium session: the emulator was given the firmware string
 `evil-fw <img src=x onerror=window.__xss=1> & 'quotes'`, the dashboard
 rendered it inert, and `window.__xss` remained unset.
+
+**Sequel — QA-11, the same swallow in a dependency.** The MQTT bridge added
+after this QA pass was developed under the same discipline, and its
+cancel-mid-flood regression test immediately caught the QA-9 failure mode
+*inside aiomqtt*: QoS>0 publish acknowledgements go through
+`asyncio.wait_for`, so a PUBACK arriving in the same event-loop tick as
+`Task.cancel()` consumed the cancellation and the bridge ran on forever.
+Third-party code cannot be patched, so the bridge resurfaces swallowed
+cancels instead: a consumed cancel leaves `Task.cancelling() > 0`, which the
+bridge checks after every publish and converts back into a real
+`CancelledError`. The test went from failing roughly two runs in three to
+5/5 clean.
 
 ## Remaining findings in brief
 

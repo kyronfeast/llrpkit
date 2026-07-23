@@ -46,6 +46,16 @@ in-package emulator, then hardened by an adversarial pre-release QA pass
 
 ### Added
 
+- MQTT bridge, behind the ``mqtt`` extra (`llrpkit.mqtt.MQTTBridge` and
+  `llrpkit inventory --mqtt-broker`): publishes one JSON message per tag
+  read to `{base}/tags` and a retained online/offline availability status
+  to `{base}/status`, registered as an MQTT Last Will so subscribers learn
+  of an ungraceful death from the broker itself. The reader stays in LLRP
+  mode — full ROSpec/RF-mode/TagFocus control — while reads fan out over
+  MQTT. Verified against a real Mosquitto broker in the test suite
+  (`examples/mqtt_bridge.py` shows the library pattern), including a
+  regression test for a cancellation-swallow in the MQTT client dependency
+  (QA-11 in `QA_REPORT.md`).
 - Field guide documentation: LLRP in plain English, sessions and targets,
   reader modes, TagFocus and serialized TID, antenna placement and health,
   and R700 onboarding with interface-switch steps verified against Impinj's

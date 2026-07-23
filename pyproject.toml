@@ -36,6 +36,9 @@ dashboard = [
   "uvicorn>=0.30",
   "websockets>=12",  # uvicorn's WebSocket protocol backend
 ]
+mqtt = [
+  "aiomqtt>=2.0",
+]
 dev = [
   "pytest>=8",
   "pytest-cov>=5",
@@ -47,7 +50,8 @@ dev = [
   "pre-commit>=3.8",
   "build>=1.2",
   "twine>=5",
-  # dashboard extra + its test client, duplicated here so `.[dev]` is complete
+  # dashboard + mqtt extras, duplicated here so `.[dev]` is complete
+  "aiomqtt>=2.0",
   "fastapi>=0.110",
   "uvicorn>=0.30",
   "websockets>=12",
