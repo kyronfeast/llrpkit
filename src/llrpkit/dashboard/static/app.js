@@ -46,6 +46,15 @@ const fmt = {
   num: (v) => (v == null ? "–" : v.toLocaleString()),
 };
 
+/* Escape every string that reaches innerHTML. Reader-supplied values
+   (firmware, error descriptions) and user-supplied ones (hostnames, profile
+   names) are untrusted: a hostile reader must not script the dashboard. */
+const esc = (v) =>
+  String(v ?? "").replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
+
 function currentReader() {
   return state.readers.find((r) => r.id === state.current) || null;
 }
@@ -160,10 +169,10 @@ async function renderReaderCards() {
       ? '<span class="status-line status-good"><span class="icon">●</span> connected</span>'
       : '<span class="status-line status-critical"><span class="icon">✕</span> offline</span>';
     card.innerHTML = `
-      <h3>${r.host}:${r.port}</h3>
+      <h3>${esc(r.host)}:${esc(r.port)}</h3>
       ${status}
-      <div class="kv"><span>Model</span><b>${r.model_number ?? "–"}</b></div>
-      <div class="kv"><span>Firmware</span><b>${r.firmware ?? "–"}</b></div>
+      <div class="kv"><span>Model</span><b>${esc(r.model_number ?? "–")}</b></div>
+      <div class="kv"><span>Firmware</span><b>${esc(r.firmware ?? "–")}</b></div>
       <div class="kv"><span>Antenna ports</span><b>${r.max_antennas ?? "–"}</b></div>
       <div class="kv"><span>Octane</span><b>${r.is_impinj ? "yes" : "no"}</b></div>
       <div class="kv"><span>Temperature</span><b class="temp">–</b></div>
@@ -219,7 +228,7 @@ function renderTagTable() {
   body.innerHTML = rows
     .map(
       (t) => `<tr>
-        <td class="epc">${t.epc}</td>
+        <td class="epc">${esc(t.epc)}</td>
         <td class="num">${t.antenna ?? "–"}</td>
         <td class="num">${fmt.rssi(t.rssi)}</td>
         <td class="num">${t.phase != null ? t.phase.toFixed(1) + "°" : "–"}</td>
@@ -377,7 +386,7 @@ function renderAlertLog() {
     .slice(0, 30)
     .map(
       (a) =>
-        `<li><time>${fmt.time(a.at)}</time><span class="icon">${alertIcon(a.kind)}</span>[${a.kind}] ${a.message}</li>`
+        `<li><time>${fmt.time(a.at)}</time><span class="icon">${alertIcon(a.kind)}</span>[${esc(a.kind)}] ${esc(a.message)}</li>`
     )
     .join("") || '<li class="empty-note">no alerts yet — that is a good sign</li>';
 }
@@ -387,7 +396,7 @@ function toast(alert) {
   const good = ["recovered", "connected"].includes(alert.kind);
   const el = document.createElement("div");
   el.className = `toast ${alert.kind === "disconnected" || alert.kind === "exception" ? "kind-critical" : ""} ${good ? "kind-good" : ""}`;
-  el.innerHTML = `${alertIcon(alert.kind)} <b>${alert.kind}</b> — ${alert.message}`;
+  el.innerHTML = `${alertIcon(alert.kind)} <b>${esc(alert.kind)}</b> — ${esc(alert.message)}`;
   $("#toasts").appendChild(el);
   setTimeout(() => el.remove(), 6000);
 }
@@ -435,7 +444,7 @@ async function loadModes() {
     const currentSetting = currentReader()?.settings?.mode_index;
     sel.innerHTML =
       '<option value="">reader default</option>' +
-      data.modes.map((m) => `<option value="${m.mode_id}">${m.mode_id} — ${m.name}</option>`).join("");
+      data.modes.map((m) => `<option value="${esc(m.mode_id)}">${esc(m.mode_id)} — ${esc(m.name)}</option>`).join("");
     sel.value = currentSetting == null ? "" : String(currentSetting);
     updateModeSummary();
   } catch { /* reader gone */ }
@@ -501,7 +510,7 @@ async function loadProfiles() {
   const sel = $("#profile-picker");
   sel.innerHTML =
     '<option value="">— load a profile —</option>' +
-    profiles.map((p, i) => `<option value="${i}">${p.name}</option>`).join("");
+    profiles.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join("");
   sel.onchange = () => {
     const p = profiles[Number(sel.value)];
     if (!p) return;

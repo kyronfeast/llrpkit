@@ -290,8 +290,11 @@ class ReaderRegistry:
     async def remove(self, reader_id: str) -> None:
         managed = self.get(reader_id)
         del self.readers[reader_id]
-        await managed.disconnect()
-        self.publish_roster()
+        try:
+            await managed.disconnect()
+        finally:
+            # Roster consistency does not depend on the LLRP goodbye succeeding.
+            self.publish_roster()
 
     async def shutdown(self) -> None:
         for reader_id in list(self.readers):
