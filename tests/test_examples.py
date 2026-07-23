@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from tests.test_cli_e2e import EmulatorThread
 
 EXAMPLES = sorted((Path(__file__).parents[1] / "examples").glob("*.py"))

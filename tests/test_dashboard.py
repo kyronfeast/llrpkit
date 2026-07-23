@@ -1,53 +1,63 @@
-"""Dashboard API and WebSocket tests against the in-process emulator.
+"""Dashboard API tests, run fully in-loop via the ASGI transport.
 
-`create_app(demo_emulator=...)` runs the emulator inside the app's own event
-loop (exactly what `llrpkit demo` does), which makes the whole stack — reader,
-registry tasks, REST, WebSocket — exercisable from a synchronous TestClient.
+These deliberately avoid Starlette's thread-portal ``TestClient``: during QA a
+rare deadlock was traced into the portal machinery (an HTTP request wedged
+while the application loop sat idle, with no llrpkit frames on any stack).
+Running the ASGI app directly in the test's event loop removes that layer
+entirely; the two tests that genuinely need the portal (WebSocket, demo
+lifespan) live in ``test_dashboard_portal.py`` under a tight timeout.
 """
 
 from __future__ import annotations
 
-import time
-from collections.abc import Iterator
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
-from llrpkit.dashboard import create_app, create_demo_app
+from llrpkit.dashboard.app import create_app
+from llrpkit.dashboard.registry import ReaderRegistry
 from llrpkit.emulator import LLRPEmulator, default_population
 
 
-@pytest.fixture(name="client")
-def fixture_client(tmp_path: Path) -> Iterator[TestClient]:
-    emulator = LLRPEmulator(
-        tags=default_population(8, 4), reads_per_sec=300.0, antenna_count=4, seed=3
-    )
-    app = create_app(
-        demo_emulator=emulator, demo_autostart=False, profile_dir=tmp_path / "profiles"
-    )
-    with TestClient(app) as test_client:
-        yield test_client
+@dataclass
+class DashboardContext:
+    http: AsyncClient
+    emulator: LLRPEmulator
+    registry: ReaderRegistry
+    rid: str
 
 
-def reader_id(client: TestClient) -> str:
-    readers = client.get("/api/state").json()["readers"]
-    assert readers, "expected the emulator-backed reader"
-    return str(readers[0]["id"])
+@pytest.fixture(name="ctx")
+async def fixture_ctx(tmp_path: Path) -> AsyncIterator[DashboardContext]:
+    emulator = LLRPEmulator(tags=default_population(8, 4), reads_per_sec=300.0, seed=3)
+    await emulator.start()
+    registry = ReaderRegistry()
+    registry.demo = True
+    app = create_app(registry, profile_dir=tmp_path / "profiles")
+    managed = await registry.add("127.0.0.1", emulator.port)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://dash") as http:
+        yield DashboardContext(http=http, emulator=emulator, registry=registry, rid=managed.id)
+    await registry.shutdown()
+    await emulator.stop()
 
 
-def wait_for(predicate, timeout: float = 5.0, interval: float = 0.1):  # type: ignore[no-untyped-def]
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        value = predicate()
-        if value:
-            return value
-        time.sleep(interval)
+async def eventually(
+    probe: Callable[[], Awaitable[bool]], timeout: float = 5.0, interval: float = 0.1
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if await probe():
+            return
+        await asyncio.sleep(interval)
     raise AssertionError("condition not met in time")
 
 
-def test_state_reports_the_emulated_reader(client: TestClient) -> None:
-    state = client.get("/api/state").json()
+async def test_state_reports_the_emulated_reader(ctx: DashboardContext) -> None:
+    state = (await ctx.http.get("/api/state")).json()
     assert state["demo"] is True
     reader = state["readers"][0]
     assert reader["connected"] is True
@@ -59,39 +69,38 @@ def test_state_reports_the_emulated_reader(client: TestClient) -> None:
     assert reader["inventory_running"] is False
 
 
-def test_inventory_start_stats_and_stop(client: TestClient) -> None:
-    rid = reader_id(client)
-    info = client.post(
-        f"/api/readers/{rid}/inventory/start", json={"search_mode": 2, "session": 1}
-    ).json()
+async def test_inventory_start_stats_and_stop(ctx: DashboardContext) -> None:
+    response = await ctx.http.post(
+        f"/api/readers/{ctx.rid}/inventory/start", json={"search_mode": 2, "session": 1}
+    )
+    info = response.json()
     assert info["inventory_running"] is True
     assert info["settings"]["search_mode"] == 2
 
-    def total() -> int:
-        return int(client.get(f"/api/readers/{rid}/health").json()["stats"]["total"])
+    async def has_reads() -> bool:
+        health = (await ctx.http.get(f"/api/readers/{ctx.rid}/health")).json()
+        return int(health["stats"]["total"]) > 10
 
-    wait_for(lambda: total() > 10)
-    health = client.get(f"/api/readers/{rid}/health").json()
+    await eventually(has_reads)
+    health = (await ctx.http.get(f"/api/readers/{ctx.rid}/health")).json()
     assert health["stats"]["unique"] >= 4
     assert any(a["reads"] > 0 for a in health["antennas"].values())
-    info = client.post(f"/api/readers/{rid}/inventory/stop").json()
+    info = (await ctx.http.post(f"/api/readers/{ctx.rid}/inventory/stop")).json()
     assert info["inventory_running"] is False
 
 
-def test_websocket_streams_tags_stats_and_health(client: TestClient) -> None:
-    rid = reader_id(client)
-    with client.websocket_connect("/ws") as ws:
-        first = ws.receive_json()
-        assert first["type"] == "state"
-        assert first["readers"][0]["id"] == rid
-        client.post(f"/api/readers/{rid}/inventory/start", json={"include_phase": True})
+async def test_hub_streams_tags_stats_and_health(ctx: DashboardContext) -> None:
+    """The event stream the WebSocket relays, consumed at the hub level."""
+    queue = ctx.registry.hub.subscribe()
+    try:
+        await ctx.http.post(f"/api/readers/{ctx.rid}/inventory/start", json={"include_phase": True})
         seen: set[str] = set()
         tag_batch = None
-        for _ in range(300):
-            msg = ws.receive_json()
-            seen.add(msg["type"])
-            if msg["type"] == "tags" and tag_batch is None:
-                tag_batch = msg
+        for _ in range(400):
+            event = await asyncio.wait_for(queue.get(), 5.0)
+            seen.add(event["type"])
+            if event["type"] == "tags" and tag_batch is None:
+                tag_batch = event
             if {"tags", "stats", "health"} <= seen:
                 break
         assert {"tags", "stats", "health"} <= seen
@@ -99,71 +108,62 @@ def test_websocket_streams_tags_stats_and_health(client: TestClient) -> None:
         row = tag_batch["items"][0]
         assert set(row) >= {"epc", "antenna", "rssi", "phase", "at"}
         assert row["epc"].startswith("e2")
-    client.post(f"/api/readers/{rid}/inventory/stop")
+    finally:
+        ctx.registry.hub.unsubscribe(queue)
+        await ctx.http.post(f"/api/readers/{ctx.rid}/inventory/stop")
 
 
-def test_modes_endpoint_serves_curated_guidance(client: TestClient) -> None:
-    rid = reader_id(client)
-    data = client.get(f"/api/readers/{rid}/modes").json()
+async def test_modes_endpoint_serves_curated_guidance(ctx: DashboardContext) -> None:
+    data = (await ctx.http.get(f"/api/readers/{ctx.rid}/modes")).json()
     by_id = {m["mode_id"]: m for m in data["modes"]}
     assert by_id[2]["name"] == "Dense Reader M4"
     assert "workhorse" in by_id[2]["summary"]
     assert by_id[1003]["autoset"] is True
-    dense = client.get(f"/api/readers/{rid}/modes", params={"dense": True}).json()
+    dense = (await ctx.http.get(f"/api/readers/{ctx.rid}/modes", params={"dense": True})).json()
     assert dense["suggestion"]["mode_id"] == 1002
 
 
-def test_temperature_endpoint(client: TestClient) -> None:
-    rid = reader_id(client)
-    celsius = client.get(f"/api/readers/{rid}/temperature").json()["celsius"]
-    assert celsius == pytest.approx(41.5, abs=1.0)
+async def test_temperature_endpoint(ctx: DashboardContext) -> None:
+    ctx.emulator.set_temperature(47.2)
+    celsius = (await ctx.http.get(f"/api/readers/{ctx.rid}/temperature")).json()["celsius"]
+    assert celsius == 47.0  # reported in whole °C
 
 
-def test_profiles_roundtrip(client: TestClient) -> None:
+async def test_profiles_roundtrip(ctx: DashboardContext) -> None:
     body = {"name": "dock door #2", "search_mode": 3, "session": 1, "antennas": [1, 2]}
-    saved = client.post("/api/profiles", json=body).json()
+    saved = (await ctx.http.post("/api/profiles", json=body)).json()
     assert saved["saved"] == "dock-door--2.json"
-    profiles = client.get("/api/profiles").json()
+    profiles = (await ctx.http.get("/api/profiles")).json()
     assert [p["name"] for p in profiles] == ["dock door #2"]
     assert profiles[0]["antennas"] == [1, 2]
     assert profiles[0]["search_mode"] == 3
 
 
-def test_unknown_reader_is_404(client: TestClient) -> None:
-    assert client.get("/api/readers/nope/health").status_code == 404
-    assert client.post("/api/readers/nope/inventory/stop").status_code == 404
+async def test_unknown_reader_is_404(ctx: DashboardContext) -> None:
+    assert (await ctx.http.get("/api/readers/nope/health")).status_code == 404
+    assert (await ctx.http.post("/api/readers/nope/inventory/stop")).status_code == 404
 
 
-def test_add_reader_connect_failure_is_502(client: TestClient) -> None:
-    response = client.post("/api/readers", json={"host": "127.0.0.1", "port": 9})
+async def test_add_reader_connect_failure_is_502(ctx: DashboardContext) -> None:
+    response = await ctx.http.post("/api/readers", json={"host": "127.0.0.1", "port": 9})
     assert response.status_code == 502
     assert "cannot connect" in response.json()["detail"]
 
 
-def test_remove_reader(client: TestClient) -> None:
-    rid = reader_id(client)
-    assert client.delete(f"/api/readers/{rid}").status_code == 204
-    assert client.get("/api/state").json()["readers"] == []
-    assert client.get(f"/api/readers/{rid}/health").status_code == 404
+async def test_remove_reader(ctx: DashboardContext) -> None:
+    assert (await ctx.http.delete(f"/api/readers/{ctx.rid}")).status_code == 204
+    assert (await ctx.http.get("/api/state")).json()["readers"] == []
+    assert (await ctx.http.get(f"/api/readers/{ctx.rid}/health")).status_code == 404
 
 
-def test_index_and_static_are_served(client: TestClient) -> None:
-    index = client.get("/")
+async def test_index_and_static_are_served(ctx: DashboardContext) -> None:
+    index = await ctx.http.get("/")
     assert index.status_code == 200
     assert "llrpkit" in index.text
-    assert client.get("/static/app.js").status_code == 200
-    assert client.get("/static/style.css").status_code == 200
+    assert (await ctx.http.get("/static/app.js")).status_code == 200
+    assert (await ctx.http.get("/static/style.css")).status_code == 200
 
 
-def test_demo_app_autostarts_inventory(tmp_path: Path) -> None:
-    app = create_demo_app(tags=6, rate=300.0)
-    with TestClient(app) as client:
-        state = client.get("/api/state").json()
-        assert state["demo"] is True
-        rid = state["readers"][0]["id"]
-        assert state["readers"][0]["inventory_running"] is True
-
-        def total() -> int:
-            return int(client.get(f"/api/readers/{rid}/health").json()["stats"]["total"])
-
-        wait_for(lambda: total() > 10)
+async def test_settings_validation_is_422(ctx: DashboardContext) -> None:
+    response = await ctx.http.post(f"/api/readers/{ctx.rid}/inventory/start", json={"session": 9})
+    assert response.status_code == 422
