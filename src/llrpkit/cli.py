@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -225,6 +225,56 @@ def capabilities(
 ) -> None:
     """Show what a reader reports about itself."""
     asyncio.run(_run_capabilities(host, port))
+
+
+def _require_dashboard() -> None:
+    try:
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - depends on install flavor
+        typer.echo(
+            "The dashboard needs the 'dashboard' extra:\n\n    pip install \"llrpkit[dashboard]\"\n"
+        )
+        raise typer.Exit(1) from exc
+
+
+async def _serve(app: Any, host: str, port: int) -> None:
+    import uvicorn
+
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+    await server.serve()
+
+
+@app.command()
+def dashboard(
+    host: Annotated[str, typer.Option(help="Bind address (localhost by default).")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="HTTP port.")] = 8000,
+) -> None:
+    """Run the web dashboard; add readers from the UI."""
+    _require_dashboard()
+    from llrpkit.dashboard import create_app
+
+    typer.echo(f"llrpkit dashboard → http://{host}:{port}  (Ctrl-C to stop)")
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(_serve(create_app(), host, port))
+
+
+@app.command()
+def demo(
+    host: Annotated[str, typer.Option(help="Bind address (localhost by default).")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="HTTP port.")] = 8000,
+    tags: Annotated[int, typer.Option(help="Synthetic tag population size.")] = 16,
+    rate: Annotated[float, typer.Option(help="Approximate tag reads per second.")] = 60.0,
+    antennas: Annotated[int, typer.Option(help="Number of antenna ports.")] = 4,
+) -> None:
+    """The sixty-second experience: emulated reader + dashboard, zero hardware."""
+    _require_dashboard()
+    from llrpkit.dashboard import create_demo_app
+
+    typer.echo(f"llrpkit demo — emulated reader + live dashboard → http://{host}:{port}")
+    typer.echo("watch the Live tab, pull an antenna in Tuning, no hardware needed. Ctrl-C stops.")
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(_serve(create_demo_app(tags=tags, rate=rate, antennas=antennas), host, port))
 
 
 async def _run_emulator(port: int, tags: int, rate: float, antennas: int, seed: int) -> None:
