@@ -8,6 +8,21 @@ All notable changes to llrpkit are documented in this file. The format follows
 
 ### Added
 
+- Tuning and health layer (Phase 3). `llrpkit.modes`: curated knowledge for
+  the Impinj mode identifiers (fixed 0-5 and the AutoSet families) joined at
+  runtime with the RFModeTable the connected reader actually reports, plus a
+  transparent `suggest_mode()`; `llrpkit modes` shows it all on the CLI.
+  `llrpkit.health`: per-antenna rolling statistics, antenna
+  connect/disconnect event handling, and once-per-incident quiet-port
+  alerts. `llrpkit.profiles`: named JSON inventory settings profiles.
+  `Reader` grows `set_keepalive()`, `get_temperature()` (Octane),
+  `events()`, and `annotated_modes()`.
+- Emulator behavioral realism: the RF mode index now scales the synthetic
+  read rate, TagFocus (search mode 3, session 1) suppresses the population
+  after first sightings the way the real feature does, antenna fault
+  injection emits proper `AntennaEvent`s and silences the port, periodic
+  keepalives honor `KeepaliveSpec`, and the Octane temperature is served.
+
 - Asyncio client stack (Phase 2): `LLRPClient` (stream framing, message-ID
   correlation, automatic keepalive acks, report/event queues, strict status
   checking) and the high-level `Reader` facade — connect, parsed

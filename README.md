@@ -4,9 +4,11 @@
 
 > 🚧 **Pre-release.** llrpkit is being built in the open toward `v0.1.0`. Already real: the
 > full LLRP 1.0.1 wire protocol with Impinj Octane extensions (golden-vector tested), the
-> asyncio `Reader` with streaming inventory, the reader **emulator**, and a CLI — try
-> `llrpkit emulate` in one terminal and `llrpkit inventory 127.0.0.1` in another, no hardware
-> required. The tuning/health layer and web dashboard land next.
+> asyncio `Reader` with streaming inventory, curated reader-mode guidance (`llrpkit modes`),
+> antenna health monitoring with quiet-port alerts, settings profiles, and an emulator whose
+> behavior *responds to tuning* — switch to Dense Reader M8 and watch the read rate drop,
+> enable TagFocus and watch the population go quiet after first reads. No hardware required.
+> The web dashboard lands next.
 
 ## Why
 
