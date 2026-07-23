@@ -8,6 +8,22 @@ All notable changes to llrpkit are documented in this file. The format follows
 
 ### Added
 
+- Asyncio client stack (Phase 2): `LLRPClient` (stream framing, message-ID
+  correlation, automatic keepalive acks, report/event queues, strict status
+  checking) and the high-level `Reader` facade — connect, parsed
+  capabilities (transmit power table, RF mode table, frequency info), the
+  Impinj Octane extensions handshake, and `reader.inventory(...)`, an async
+  stream of flattened `TagReport` objects with unit conversion (sub-dBm
+  RSSI, phase in degrees, Doppler in Hz, serialized TID bytes). ROSpecs are
+  created on entry and always stopped and deleted on exit.
+- Reader emulator (`llrpkit.emulator.LLRPEmulator`): an in-process
+  Impinj-flavored LLRP reader — connection-attempt handshake with proper
+  second-client refusal, capabilities, the full ROSpec lifecycle, Octane
+  extensions awareness, and synthetic tag reports honoring the requested
+  report content. Powers the test suite, CI, and zero-hardware demos.
+- CLI: `llrpkit inventory` (live tag stream with search-mode/power/session
+  tuning flags), `llrpkit capabilities`, and `llrpkit emulate`.
+
 - Wire protocol (Phase 1): a hand-written, bit-accurate LLRP codec
   (`llrpkit.protocol.codec`) with strict bounds checking, plus code-generated
   message/parameter/enumeration classes for all of LLRP 1.0.1 (39 messages,

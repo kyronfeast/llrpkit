@@ -2,10 +2,11 @@
 
 **A modern, typed, asyncio-native Python toolkit for LLRP RAIN RFID readers — built Impinj-first (R700 and Speedway), with a reader emulator, a web dashboard, and a written field guide.**
 
-> 🚧 **Pre-release.** llrpkit is being built in the open toward `v0.1.0`. The wire protocol is
-> real: a bit-accurate codec plus generated classes for all of LLRP 1.0.1 and the Impinj Octane
-> extensions, verified by hand-computed golden vectors and fuzzing. The asyncio client and
-> emulator land next. Watch the repo to follow along.
+> 🚧 **Pre-release.** llrpkit is being built in the open toward `v0.1.0`. Already real: the
+> full LLRP 1.0.1 wire protocol with Impinj Octane extensions (golden-vector tested), the
+> asyncio `Reader` with streaming inventory, the reader **emulator**, and a CLI — try
+> `llrpkit emulate` in one terminal and `llrpkit inventory 127.0.0.1` in another, no hardware
+> required. The tuning/health layer and web dashboard land next.
 
 ## Why
 
@@ -26,9 +27,19 @@ llrpkit exists to close all of that at once:
 | **Dashboard** | FastAPI + WebSockets: multi-reader management, live tag streams, antenna health cards, an interactive reader-mode tuning workbench | Phase 4 |
 | **Field guide** | Plain-English docs for the folklore: sessions and targets, reader modes, dense-reader environments, antenna health methodology | Phase 5 |
 
-## API preview
+## Try it in sixty seconds (no reader required)
 
-The target surface (lands in Phase 2 — shown here so the design is public from day one):
+```console
+$ pip install -e .
+$ llrpkit emulate --port 5084 &      # a fake Impinj-style reader
+$ llrpkit inventory 127.0.0.1 --search-mode tagfocus --phase --count 5
+connected: model 700, firmware 'llrpkit-emu 0.1', 4 antenna ports (Octane extensions on)
+e2000017010b016210000002  ant 3   -52.06 dBm  phase  340.0°
+...
+$ llrpkit capabilities 127.0.0.1     # power table, RF modes, antenna ports
+```
+
+## The API
 
 ```python
 import asyncio
@@ -38,20 +49,16 @@ from llrpkit import Reader
 
 async def main() -> None:
     async with Reader("192.168.1.10") as reader:
-        print(reader.model, reader.firmware)
-        async for tag in reader.inventory(antennas=(1, 2), session=1):
-            print(tag.epc, tag.antenna, tag.peak_rssi_dbm)
+        print(reader.model_number, reader.firmware)
+        async for tag in reader.inventory(antennas=(1, 2), session=1, search_mode=3):
+            print(tag.epc_hex, tag.antenna, tag.rssi_dbm)
 
 
 asyncio.run(main())
 ```
 
-And the zero-hardware demo, once the dashboard exists:
-
-```console
-$ pip install llrpkit
-$ llrpkit demo   # emulated reader + live dashboard at http://127.0.0.1:8000
-```
+Works identically against the emulator (`Reader("127.0.0.1", emu.port)`), a Speedway,
+or an R700 in LLRP mode. The full dashboard demo (`llrpkit demo`) arrives with Phase 4.
 
 ## Roadmap
 
