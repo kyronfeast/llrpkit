@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llrpkit</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3' fill='%232a78d6'/%3E%3Cpath d='M8 1a7 7 0 0 1 7 7h-1.6A5.4 5.4 0 0 0 8 2.6z' fill='%232a78d6'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <span class="brand-name">llrpkit</span>
+    <span id="demo-badge" class="badge badge-demo" hidden>demo — emulated reader</span>
+  </div>
+  <div class="topbar-right">
+    <select id="reader-picker" class="control" aria-label="Active reader"></select>
+    <span id="ws-dot" class="ws-dot" title="dashboard link">●</span>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab active" data-panel="live" role="tab">Live tags</button>
+  <button class="tab" data-panel="antennas" role="tab">Antennas</button>
+  <button class="tab" data-panel="tuning" role="tab">Tuning</button>
+  <button class="tab" data-panel="readers" role="tab">Readers</button>
+</nav>
+
+<main>
+  <!-- ======================= LIVE ======================= -->
+  <section id="panel-live" class="panel active">
+    <div class="tiles">
+      <div class="tile"><div class="tile-label">Reads / sec</div><div id="tile-rate" class="tile-value">–</div></div>
+      <div class="tile"><div class="tile-label">Unique tags</div><div id="tile-unique" class="tile-value">–</div></div>
+      <div class="tile"><div class="tile-label">Total reads</div><div id="tile-total" class="tile-value">–</div></div>
+      <div class="tile"><div class="tile-label">Inventory</div><div id="tile-running" class="tile-value tile-status">–</div></div>
+    </div>
+
+    <figure class="chart-card">
+      <figcaption class="chart-title">Read rate <span class="chart-sub">reads/sec, last 90 s</span></figcaption>
+      <div id="rate-chart" class="chart" data-chart="line"></div>
+    </figure>
+
+    <div class="table-card">
+      <div class="table-tools">
+        <input id="epc-filter" class="control" type="search" placeholder="filter by EPC…" aria-label="Filter by EPC">
+        <select id="antenna-filter" class="control" aria-label="Filter by antenna"><option value="">all antennas</option></select>
+      </div>
+      <table class="tag-table">
+        <thead><tr><th>EPC</th><th>Ant</th><th>RSSI (dBm)</th><th>Phase</th><th>Ch</th><th>Seen</th></tr></thead>
+        <tbody id="tag-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== ANTENNAS ===================== -->
+  <section id="panel-antennas" class="panel">
+    <div id="antenna-cards" class="cards"></div>
+    <div class="table-card">
+      <div class="chart-title">Alert log</div>
+      <ul id="alert-log" class="alert-log"></ul>
+    </div>
+  </section>
+
+  <!-- ====================== TUNING ====================== -->
+  <section id="panel-tuning" class="panel">
+    <div class="tuning-grid">
+      <form id="tuning-form" class="form-card" autocomplete="off">
+        <div class="chart-title">Inventory settings</div>
+        <label>Antennas <input id="set-antennas" class="control" placeholder="all (or 1,2)"></label>
+        <label>Session
+          <select id="set-session" class="control">
+            <option value="0">S0 — fast repeats, small populations</option>
+            <option value="1" selected>S1 — the usual choice</option>
+            <option value="2">S2 — large populations</option>
+            <option value="3">S3 — large populations (alt flag)</option>
+          </select>
+        </label>
+        <label>Search mode
+          <select id="set-search" class="control">
+            <option value="">reader default</option>
+            <option value="1">single target</option>
+            <option value="2">dual target — see everything, repeatedly</option>
+            <option value="3">TagFocus — each tag once, then quiet (S1)</option>
+          </select>
+        </label>
+        <label>RF mode <select id="set-mode" class="control"></select></label>
+        <p id="mode-summary" class="mode-summary"></p>
+        <label>Transmit power <span id="power-value" class="power-value">reader default</span>
+          <input id="set-power" class="power-slider" type="range" disabled>
+          <span class="checkline"><input id="power-default" type="checkbox" checked> use reader default</span>
+        </label>
+        <label>Tag population <input id="set-population" class="control" type="number" value="32" min="1"></label>
+        <div class="row">
+          <button type="submit" class="btn btn-primary">Apply &amp; run</button>
+          <button type="button" id="btn-stop" class="btn">Stop</button>
+        </div>
+      </form>
+
+      <div class="form-card">
+        <div class="chart-title">Mode suggestion</div>
+        <span class="checkline"><input id="sugg-dense" type="checkbox"> dense multi-reader site</span>
+        <span class="checkline"><input id="sugg-fast" type="checkbox"> prioritize throughput</span>
+        <div class="row">
+          <button id="btn-suggest" class="btn">Suggest</button>
+          <button id="btn-use-suggestion" class="btn" hidden>Use it</button>
+        </div>
+        <p id="suggestion-text" class="mode-summary"></p>
+
+        <div class="chart-title" style="margin-top:18px">Profiles</div>
+        <div class="row">
+          <select id="profile-picker" class="control"><option value="">— load a profile —</option></select>
+        </div>
+        <div class="row">
+          <input id="profile-name" class="control" placeholder="profile name">
+          <button id="btn-save-profile" class="btn">Save current</button>
+        </div>
+      </div>
+
+      <figure class="chart-card tuning-chart">
+        <figcaption class="chart-title">Live response <span class="chart-sub">reads/sec — change a setting, watch it move</span></figcaption>
+        <div id="tuning-chart" class="chart" data-chart="line"></div>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ====================== READERS ===================== -->
+  <section id="panel-readers" class="panel">
+    <form id="add-reader-form" class="form-card row-form">
+      <input id="add-host" class="control" placeholder="reader hostname or IP" required>
+      <input id="add-port" class="control port" type="number" value="5084" min="1" max="65535">
+      <button class="btn btn-primary" type="submit">Connect</button>
+      <span id="add-error" class="form-error" role="alert"></span>
+    </form>
+    <div id="reader-cards" class="cards"></div>
+  </section>
+</main>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="tooltip" class="tooltip" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
