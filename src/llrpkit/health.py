@@ -52,7 +52,8 @@ class AntennaHealth:
     rssi_max: float | None = None
     _rssi_sum: float = 0.0
     _rssi_count: int = 0
-    _recent: deque[float] = field(default_factory=lambda: deque(maxlen=512))
+    # Sized so the rate window stays accurate up to ~2000 reads/s per port.
+    _recent: deque[float] = field(default_factory=lambda: deque(maxlen=4096))
 
     @property
     def rssi_mean(self) -> float | None:

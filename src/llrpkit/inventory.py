@@ -114,6 +114,10 @@ def build_rospec(
     ``channel_index`` matter only for frequency-hopping / fixed-channel
     regulatory regions respectively.
     """
+    if not 0 <= session <= 3:
+        raise ValueError(f"session must be 0-3, got {session}")
+    if tag_population < 1:
+        raise ValueError(f"tag_population must be positive, got {tag_population}")
     inv_cmd = params.C1G2InventoryCommand(
         tag_inventory_state_aware=False,
         c1_g2_singulation_control=params.C1G2SingulationControl(

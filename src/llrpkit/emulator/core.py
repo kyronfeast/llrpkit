@@ -156,7 +156,8 @@ class LLRPEmulator:
         await self._send(messages.KEEPALIVE(), message_id=99)
 
     async def wait_keepalive_ack(self, timeout: float = 2.0) -> None:
-        await asyncio.wait_for(self._keepalive_acked.wait(), timeout)
+        async with asyncio.timeout(timeout):
+            await self._keepalive_acked.wait()
 
     def set_temperature(self, celsius: float) -> None:
         """Set the temperature reported via the Octane extension."""
@@ -501,7 +502,8 @@ class LLRPEmulator:
 
     def _sync_reporting(self) -> None:
         active = any(state == "Active" for _, state in self._rospecs.values())
-        if active and self._report_task is None:
+        task_alive = self._report_task is not None and not self._report_task.done()
+        if active and not task_alive:
             self._report_task = asyncio.get_running_loop().create_task(self._report_loop())
         elif not active:
             self._stop_reporting()
