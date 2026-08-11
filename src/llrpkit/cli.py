@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from typing import Annotated, Any
 
 import typer
@@ -82,6 +83,9 @@ async def _run_inventory_mqtt(
     username: str | None,
     password: str | None,
     inventory_kwargs: dict[str, Any],
+    *,
+    publish_events: bool = False,
+    depart_after: float = 2.0,
 ) -> int:
     from llrpkit.mqtt import MQTTBridge
     from llrpkit.reader import Reader
@@ -99,6 +103,8 @@ async def _run_inventory_mqtt(
             username=username,
             password=password,
             qos=qos,
+            publish_events=publish_events,
+            depart_after=depart_after,
         )
         typer.echo(
             f"publishing → mqtt://{broker[0]}:{broker[1]}  "
@@ -117,6 +123,40 @@ def _parse_antennas(value: str) -> list[int]:
         return [int(part) for part in value.split(",") if part.strip()]
     except ValueError as exc:
         raise typer.BadParameter(f"antenna list {value!r} is not comma-separated integers") from exc
+
+
+async def _run_events_mode(
+    host: str, port: int, inventory_kwargs: dict[str, Any], depart_after: float
+) -> None:
+    from contextlib import aclosing
+
+    from llrpkit.presence import PresenceTracker, ticked_stream
+    from llrpkit.reader import Reader
+
+    tracker = PresenceTracker(depart_after=depart_after)
+    async with Reader(host, port) as reader:
+        typer.echo(
+            f"connected: model {reader.model_number} — presence events "
+            f"(depart after {depart_after:.1f}s of silence)"
+        )
+        ticked = ticked_stream(reader.inventory(**inventory_kwargs))
+        async with aclosing(ticked):
+            async for tag in ticked:
+                events = list(tracker.observe(tag)) if tag is not None else []
+                events.extend(tracker.check())
+                for event in events:
+                    stamp = time.strftime("%H:%M:%S")
+                    if event.kind == "arrived":
+                        typer.echo(
+                            f"{stamp}  + arrived   {event.epc_hex}  ant {event.antenna}"
+                            f"   ({len(tracker.present)} present)"
+                        )
+                    else:
+                        dwell = f"{event.dwell_s:.1f}s" if event.dwell_s is not None else "-"
+                        typer.echo(
+                            f"{stamp}  - departed  {event.epc_hex}  dwell {dwell}"
+                            f"  {event.reads} reads   ({len(tracker.present)} present)"
+                        )
 
 
 async def _run_inventory(
@@ -183,6 +223,21 @@ def inventory(
     decode: Annotated[
         bool, typer.Option("--decode", help="Decode GS1 EPCs (GTIN/SSCC/...) inline.")
     ] = False,
+    events: Annotated[
+        bool,
+        typer.Option("--events", help="Report arrive/depart edges instead of every read."),
+    ] = False,
+    depart_after: Annotated[
+        float,
+        typer.Option(help="With --events / --mqtt-events: silence meaning 'gone', seconds."),
+    ] = 2.0,
+    mqtt_events: Annotated[
+        bool,
+        typer.Option(
+            "--mqtt-events",
+            help="With --mqtt-broker: also publish arrive/depart events.",
+        ),
+    ] = False,
     mqtt_broker: Annotated[
         str | None,
         typer.Option(
@@ -241,11 +296,17 @@ def inventory(
                         mqtt_username,
                         mqtt_password,
                         inventory_kwargs,
+                        publish_events=mqtt_events,
+                        depart_after=depart_after,
                     )
                 )
         except aiomqtt.MqttError as exc:
             typer.echo(f"MQTT error: {exc}")
             raise typer.Exit(1) from exc
+        return
+    if events:
+        with contextlib.suppress(KeyboardInterrupt):
+            asyncio.run(_run_events_mode(host, port, inventory_kwargs, depart_after))
         return
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run_inventory(host, port, inventory_kwargs, show_decode=decode))

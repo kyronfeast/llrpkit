@@ -19,6 +19,10 @@ Topics under ``base_topic``:
 
 ``{base}/tags``
     One JSON object per tag observation (see :func:`tag_payload`).
+``{base}/events``
+    With ``publish_events=True``: arrive/depart presence edges
+    (see :mod:`llrpkit.presence`) — the LLRP-side counterpart of the IoT
+    interface's tag entry/exit events.
 ``{base}/status``
     Retained ``{"status": "online"|"offline", ...}``. The *offline* payload
     is registered as the MQTT Last Will, so the broker publishes it even if
@@ -42,6 +46,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from llrpkit.inventory import TagReport
+from llrpkit.presence import PresenceTracker, ticked_stream
 from llrpkit.reader import Reader
 
 try:
@@ -110,6 +115,10 @@ class MQTTBridge:
     password: str | None = None
     qos: int = 0
     client_id: str | None = None
+    #: Publish arrive/depart presence edges to ``{base}/events`` (QoS 1).
+    publish_events: bool = False
+    #: With ``publish_events``: silence meaning "departed", in seconds.
+    depart_after: float = 2.0
     #: Tag messages published so far (readable while :meth:`run` is active).
     published: int = field(default=0, init=False)
 
@@ -120,6 +129,10 @@ class MQTTBridge:
     @property
     def status_topic(self) -> str:
         return f"{self.base_topic}/status"
+
+    @property
+    def events_topic(self) -> str:
+        return f"{self.base_topic}/events"
 
     def _status_payload(self, status: str, reader: str) -> str:
         return json.dumps(
@@ -161,15 +174,43 @@ class MQTTBridge:
                 self.status_topic, self._status_payload("online", label), qos=1, retain=True
             )
             _resurface_swallowed_cancel()
-            stream = reader.inventory(**inventory_kwargs)
+            tracker = PresenceTracker(depart_after=self.depart_after)
+            ticked = ticked_stream(reader.inventory(**inventory_kwargs))
             try:
-                async with contextlib.aclosing(stream):
-                    async for tag in stream:
-                        await client.publish(
-                            self.tags_topic, json.dumps(tag_payload(tag, label)), qos=self.qos
-                        )
-                        self.published += 1
-                        _resurface_swallowed_cancel()
+                async with contextlib.aclosing(ticked):
+                    async for tag in ticked:
+                        if tag is not None:
+                            await client.publish(
+                                self.tags_topic,
+                                json.dumps(tag_payload(tag, label)),
+                                qos=self.qos,
+                            )
+                            self.published += 1
+                            _resurface_swallowed_cancel()
+                        if self.publish_events:
+                            edges = list(tracker.observe(tag)) if tag is not None else []
+                            edges.extend(tracker.check())
+                            for edge in edges:
+                                await client.publish(
+                                    self.events_topic,
+                                    json.dumps(
+                                        {
+                                            "event": edge.kind,
+                                            "reader": label,
+                                            "epc": edge.epc_hex,
+                                            "antenna": edge.antenna,
+                                            "dwell_s": (
+                                                round(edge.dwell_s, 2)
+                                                if edge.dwell_s is not None
+                                                else None
+                                            ),
+                                            "reads": edge.reads,
+                                            "at": round(time.time(), 3),
+                                        }
+                                    ),
+                                    qos=1,
+                                )
+                                _resurface_swallowed_cancel()
             finally:
                 # A graceful goodbye: the Last Will only fires when we vanish
                 # without one. Bounded so a dead broker cannot stall teardown.
