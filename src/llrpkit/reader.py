@@ -56,6 +56,14 @@ def _resolve_bank(bank: int | str) -> int:
 
 
 @dataclass(frozen=True)
+class GPIOState:
+    """Snapshot of the reader's general-purpose I/O."""
+
+    gpis: dict[int, str]
+    gpos: dict[int, bool]
+
+
+@dataclass(frozen=True)
 class AccessResult:
     """Outcome of one tag-access operation (read/write/kill).
 
@@ -317,6 +325,50 @@ class Reader:
             if isinstance(p, impinj.ImpinjReaderTemperature):
                 return float(p.temperature)
         return None
+
+    # -- GPIO ---------------------------------------------------------------
+
+    async def get_gpio(self) -> GPIOState:
+        """Current GPI levels and GPO settings.
+
+        GPI values are ``"high"``/``"low"``, or ``"disabled"`` when the
+        port's configuration is off; GPO values are booleans.
+        """
+        response = await self.get_config(enums.GetReaderConfigRequestedData.All)
+        gpis = {}
+        for gpi in response.gpi_port_current_states:
+            if not gpi.config:
+                gpis[gpi.gpi_port_num] = "disabled"
+            else:
+                gpis[gpi.gpi_port_num] = (
+                    "high" if int(gpi.state) == int(enums.GPIPortState.High) else "low"
+                )
+        gpos = {g.gpo_port_number: bool(g.gpo_data) for g in response.gpo_write_datas}
+        return GPIOState(gpis=gpis, gpos=gpos)
+
+    async def set_gpo(self, port: int, state: bool) -> None:
+        """Drive a general-purpose output (lamp, gate, stack light...)."""
+        check_status(
+            await self.client.transact(
+                messages.SET_READER_CONFIG(
+                    reset_to_factory_default=False,
+                    gpo_write_datas=[params.GPOWriteData(gpo_port_number=port, gpo_data=state)],
+                )
+            )
+        )
+
+    async def set_gpi_enabled(self, port: int, enabled: bool) -> None:
+        """Enable or disable a general-purpose input port's configuration."""
+        check_status(
+            await self.client.transact(
+                messages.SET_READER_CONFIG(
+                    reset_to_factory_default=False,
+                    gpi_port_current_states=[
+                        params.GPIPortCurrentState(gpi_port_num=port, config=enabled, state=0)
+                    ],
+                )
+            )
+        )
 
     # -- tag access (read / write / kill) ----------------------------------
 

@@ -133,6 +133,10 @@ class LLRPEmulator:
         #: Per-tag memory banks, keyed by current EPC.
         self._memories: dict[bytes, dict[int, bytearray]] = {}
         self._locked_banks: dict[bytes, set[int]] = {}
+        #: GPIO: 4 inputs (config-enabled, level) and 4 outputs.
+        self._gpi_config: dict[int, bool] = dict.fromkeys(range(1, 5), True)
+        self._gpi_high: dict[int, bool] = dict.fromkeys(range(1, 5), False)
+        self._gpo_states: dict[int, bool] = dict.fromkeys(range(1, 5), False)
         self._report_task: asyncio.Task[None] | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
         self._keepalive_acked = asyncio.Event()
@@ -191,6 +195,26 @@ class LLRPEmulator:
             reserved[0:4] = kill.to_bytes(4, "big")
         if access is not None:
             reserved[4:8] = access.to_bytes(4, "big")
+
+    async def set_gpi(self, port: int, high: bool) -> None:
+        """Fault/stimulus injection: drive a GPI line; notifies the client.
+
+        A GPIEvent is delivered only when the port's configuration is
+        enabled, mirroring real reader behavior.
+        """
+        if port not in self._gpi_high:
+            raise ValueError(f"no GPI port {port}")
+        changed = self._gpi_high[port] != high
+        self._gpi_high[port] = high
+        if changed and self._gpi_config[port]:
+            await self._send(
+                messages.READER_EVENT_NOTIFICATION(
+                    reader_event_notification_data=params.ReaderEventNotificationData(
+                        timestamp=params.UTCTimestamp(microseconds=self._now_us()),
+                        gpi_event=params.GPIEvent(gpi_port_number=port, gpi_event=high),
+                    )
+                )
+            )
 
     def set_temperature(self, celsius: float) -> None:
         """Set the temperature reported via the Octane extension."""
@@ -316,12 +340,55 @@ class LLRPEmulator:
         elif isinstance(msg, messages.SET_READER_CONFIG):
             if msg.keepalive_spec is not None:
                 self._apply_keepalive_spec(msg.keepalive_spec)
+            status = self._status_ok()
+            for gpo in msg.gpo_write_datas:
+                if gpo.gpo_port_number not in self._gpo_states:
+                    status = self._status_error(
+                        enums.StatusCode.M_ParameterError,
+                        f"no GPO port {gpo.gpo_port_number}",
+                    )
+                    break
+                self._gpo_states[gpo.gpo_port_number] = bool(gpo.gpo_data)
+            for gpi in msg.gpi_port_current_states:
+                if gpi.gpi_port_num not in self._gpi_config:
+                    status = self._status_error(
+                        enums.StatusCode.M_ParameterError, f"no GPI port {gpi.gpi_port_num}"
+                    )
+                    break
+                self._gpi_config[gpi.gpi_port_num] = bool(gpi.config)
             await self._send(
-                messages.SET_READER_CONFIG_RESPONSE(llrp_status=self._status_ok()),
-                message_id=mid,
+                messages.SET_READER_CONFIG_RESPONSE(llrp_status=status), message_id=mid
             )
         elif isinstance(msg, messages.GET_READER_CONFIG):
             response = messages.GET_READER_CONFIG_RESPONSE(llrp_status=self._status_ok())
+            requested = int(msg.requested_data)
+            if requested in (
+                int(enums.GetReaderConfigRequestedData.All),
+                int(enums.GetReaderConfigRequestedData.GPIPortCurrentState),
+            ):
+                for port in sorted(self._gpi_config):
+                    state = (
+                        (
+                            enums.GPIPortState.High
+                            if self._gpi_high[port]
+                            else enums.GPIPortState.Low
+                        )
+                        if self._gpi_config[port]
+                        else enums.GPIPortState.Unknown
+                    )
+                    response.gpi_port_current_states.append(
+                        params.GPIPortCurrentState(
+                            gpi_port_num=port, config=self._gpi_config[port], state=state
+                        )
+                    )
+            if requested in (
+                int(enums.GetReaderConfigRequestedData.All),
+                int(enums.GetReaderConfigRequestedData.GPOWriteData),
+            ):
+                for port, level in sorted(self._gpo_states.items()):
+                    response.gpo_write_datas.append(
+                        params.GPOWriteData(gpo_port_number=port, gpo_data=level)
+                    )
             if self._extensions_enabled and self._temperature_requested(msg):
                 response.custom.append(
                     impinj.ImpinjReaderTemperature(temperature=round(self._temperature))

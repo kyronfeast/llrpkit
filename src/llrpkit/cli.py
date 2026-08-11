@@ -368,6 +368,55 @@ def write_epc(
     asyncio.run(run())
 
 
+@app.command()
+def gpio(
+    host: Annotated[str, typer.Argument(help="Reader hostname or IP.")],
+    port: Annotated[int, typer.Option(help="LLRP port.")] = 5084,
+    set_: Annotated[
+        list[str] | None,
+        typer.Option("--set", help="Drive a GPO, e.g. --set 1=on --set 2=off (repeatable)."),
+    ] = None,
+    enable_gpi: Annotated[
+        int | None, typer.Option(help="Enable this GPI port's configuration.")
+    ] = None,
+    disable_gpi: Annotated[
+        int | None, typer.Option(help="Disable this GPI port's configuration.")
+    ] = None,
+) -> None:
+    """Show GPI/GPO state; optionally drive outputs or (un)configure inputs."""
+    from llrpkit.reader import Reader
+
+    changes: list[tuple[int, bool]] = []
+    for item in set_ or []:
+        port_text, _, value = item.partition("=")
+        try:
+            gpo_port = int(port_text)
+        except ValueError as exc:
+            raise typer.BadParameter(f"--set {item!r}: port is not an integer") from exc
+        if value.lower() not in ("on", "off", "1", "0", "true", "false", "high", "low"):
+            raise typer.BadParameter(f"--set {item!r}: value must be on/off")
+        changes.append((gpo_port, value.lower() in ("on", "1", "true", "high")))
+
+    async def run() -> None:
+        async with Reader(host, port) as reader:
+            for gpo_port, state in changes:
+                await reader.set_gpo(gpo_port, state)
+                typer.echo(f"GPO {gpo_port} -> {'on' if state else 'off'}")
+            if enable_gpi is not None:
+                await reader.set_gpi_enabled(enable_gpi, True)
+                typer.echo(f"GPI {enable_gpi} configuration enabled")
+            if disable_gpi is not None:
+                await reader.set_gpi_enabled(disable_gpi, False)
+                typer.echo(f"GPI {disable_gpi} configuration disabled")
+            state_now = await reader.get_gpio()
+            for gpi_port in sorted(state_now.gpis):
+                typer.echo(f"GPI {gpi_port}: {state_now.gpis[gpi_port]}")
+            for gpo_port in sorted(state_now.gpos):
+                typer.echo(f"GPO {gpo_port}: {'on' if state_now.gpos[gpo_port] else 'off'}")
+
+    asyncio.run(run())
+
+
 async def _run_modes(host: str, port: int, dense: bool, fast: bool) -> None:
     from llrpkit.modes import suggest_mode
     from llrpkit.reader import Reader
