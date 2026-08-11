@@ -12,7 +12,7 @@ def test_partition_tables_are_internally_consistent() -> None:
     totals = {"sgtin-96": 44, "sscc-96": 58, "sgln-96": 41, "grai-96": 44, "giai-96": 82}
     for scheme, table in _PARTITIONS.items():
         assert set(table) == set(range(7)), scheme
-        for _, (company_bits, company_digits, field_bits, _) in table.items():
+        for _, (company_bits, _company_digits, field_bits, _) in table.items():
             assert company_bits + field_bits == totals[scheme], scheme
         digits = [table[p][1] for p in range(7)]
         assert digits == [12, 11, 10, 9, 8, 7, 6], scheme  # GS1 company prefix sizes
