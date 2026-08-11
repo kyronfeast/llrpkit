@@ -43,4 +43,5 @@ nav:
       - Antenna health: field-guide/antenna-health.md
       - R700 onboarding: field-guide/r700-onboarding.md
   - API tour: api.md
+  - How llrpkit compares: comparison.md
   - Contributing: contributing.md

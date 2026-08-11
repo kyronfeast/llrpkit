@@ -33,6 +33,19 @@ e2000017010b016210000002  ant 3   -52.06 dBm  phase  340.0°
 `llrpkit capabilities 127.0.0.1` shows what the reader reports about itself: antenna
 ports, the transmit power table, and the RF mode table. Everything works the same
 against real Impinj hardware — point the commands at the reader's address.
+
+From there the toolbox opens up — all of it works against the emulator too:
+
+```console
+$ llrpkit inventory 127.0.0.1 --events --depart-after 1.5    # arrive/depart edges
+$ llrpkit inventory 127.0.0.1 --filter-epc e200 --decode --output reads.csv
+$ llrpkit read  127.0.0.1 --bank user --words 4 --epc e2000017010b016210000003
+$ llrpkit write-epc 127.0.0.1 --new-epc 3074... --epc e200...  # re-label a tag
+$ llrpkit sweep 127.0.0.1 --powers 15,20,25,30 --seconds 3     # coverage survey
+$ llrpkit gpio  127.0.0.1 --set 1=on                           # stack light
+$ llrpkit decode 3074257bf7194e4000001a85                      # EPC -> GTIN+serial
+$ llrpkit profile save dock-1 --search-mode tagfocus --power 27.5
+```
 (`llrpkit demo`, the emulator plus the web dashboard in one command, arrives with the
 dashboard phase.)
 

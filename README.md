@@ -29,6 +29,16 @@ llrpkit exists to close all of that at once:
 | **Dashboard** | FastAPI + WebSockets: multi-reader management, live tag streams, antenna health cards, an interactive reader-mode tuning workbench | Phase 4 |
 | **Field guide** | Plain-English docs for the folklore: sessions and targets, reader modes, dense-reader environments, antenna health methodology | Phase 5 |
 
+Beyond the core: **tag select filters** (reader-side EPC prefix include/exclude),
+**Gen2 tag memory access** (read/write/EPC-rewrite/kill with password support),
+**GPIO** (outputs, GPI events), **GS1 EPC decoding** (SGTIN/SSCC/SGLN/GRAI/GIAI/GID-96
+to GTINs and pure-identity URIs), **presence events** (arrive/depart with dwell —
+the IoT interface's entry/exit, LLRP-side), an **MQTT bridge** (tags, presence
+events, retained availability with a Last Will), **capture** to CSV/JSONL,
+**power/mode surveys**, and **settings profiles** shared between CLI and
+dashboard. `docs/comparison.md` maps all of it against sllurp, the Octane SDK,
+ItemTest, and the IoT Device Interface.
+
 ## Try it in sixty seconds (no reader required)
 
 ```console
@@ -51,6 +61,11 @@ e2000017010b016210000002  ant 3   -52.06 dBm  phase  340.0°
 ...
 $ llrpkit modes 127.0.0.1            # the RF mode table, with curated guidance
 $ llrpkit capabilities 127.0.0.1     # power table, antenna ports, temperature
+$ llrpkit inventory 127.0.0.1 --events --filter-epc e200 --output reads.csv
+$ llrpkit read 127.0.0.1 --bank user --words 4      # Gen2 tag memory access
+$ llrpkit sweep 127.0.0.1 --powers 15,20,25,30      # coverage survey
+$ llrpkit decode 3074257bf7194e4000001a85           # EPC -> GTIN + serial
+$ llrpkit gpio 127.0.0.1 --set 1=on                 # outputs, GPI events
 ```
 
 Feeding an IoT stack instead? With the `mqtt` extra the same inventory

@@ -46,6 +46,41 @@ in-package emulator, then hardened by an adversarial pre-release QA pass
 
 ### Added
 
+- **Tag select filters**: `epc_filter`/`filter_action` on
+  `Reader.inventory()`/`build_rospec()` (C1G2 Select, include or exclude,
+  retargetable via `filter_mb`/`filter_pointer`), CLI `--filter-epc
+  --filter-action`, dashboard settings fields, and bit-accurate emulator
+  enforcement.
+- **Gen2 tag memory access** via the AccessSpec lifecycle:
+  `Reader.read_memory()/write_memory()/write_epc()/kill_tag()` with named
+  banks, EPC targeting, access/kill passwords, and typed `AccessResult`s;
+  CLI `llrpkit read`, `llrpkit write`, `llrpkit write-epc`. The emulator
+  models per-tag memory banks, passwords, EPC re-labeling, kill, overrun
+  and locked-bank results, and the full ACCESSSPEC message set.
+- **GPIO**: `Reader.get_gpio()/set_gpo()/set_gpi_enabled()`, GPI edge
+  events through `reader.events()`, `llrpkit gpio` command, and an
+  emulator GPIO model with stimulus injection.
+- **GS1 EPC decoding** (`llrpkit.epc`): SGTIN-96, SSCC-96, SGLN-96,
+  GRAI-96, GIAI-96, and GID-96 to tag URIs, pure-identity URIs, GTIN-14 /
+  SSCC-18 / GLN-13 with computed check digits, and GS1 element strings —
+  anchored on the Tag Data Standard's canonical vector. CLI `llrpkit
+  decode` and `llrpkit inventory --decode`.
+- **Presence events** (`llrpkit.presence`): `PresenceTracker` arrive /
+  depart edges with dwell times, stray-read debounce, and a
+  `ticked_stream()` helper that keeps the clock running through quiet
+  fields; CLI `--events --depart-after`, MQTT `{base}/events` via
+  `MQTTBridge(publish_events=True)` / `--mqtt-events`.
+- **Capture**: `llrpkit.capture.TagWriter` to CSV/JSONL with GS1 decode
+  columns; CLI `llrpkit inventory --output FILE`.
+- **RF surveys**: `llrpkit.survey.sweep()` measures reads/s and unique
+  count per power x mode combination; CLI `llrpkit sweep`. The emulator is
+  power-responsive (rate scaling plus a weak-tag energizing threshold), so
+  surveys show real coverage differences with zero hardware.
+- **Profiles CLI**: `llrpkit profile save/list/show/delete` and `llrpkit
+  inventory --profile NAME`, sharing the dashboard's profile store
+  (`LLRPKIT_PROFILE_DIR` overrides the location).
+- `docs/comparison.md`: an honest feature map against sllurp, the Octane
+  SDK, ItemTest, and the Impinj IoT Device Interface.
 - MQTT bridge, behind the ``mqtt`` extra (`llrpkit.mqtt.MQTTBridge` and
   `llrpkit inventory --mqtt-broker`): publishes one JSON message per tag
   read to `{base}/tags` and a retained online/offline availability status
@@ -60,9 +95,10 @@ in-package emulator, then hardened by an adversarial pre-release QA pass
   reader modes, TagFocus and serialized TID, antenna placement and health,
   and R700 onboarding with interface-switch steps verified against Impinj's
   R700 Installation and Operations Guide (v8.1.7).
-- Four runnable examples (`examples/`), each exercised against the emulator
+- Five runnable examples (`examples/`), each exercised against the emulator
   in CI: `read_tags.py`, `tagfocus_dock_door.py`, `mode_shootout.py`,
-  `antenna_watch.py`. An API tour page and expanded docs navigation.
+  `antenna_watch.py`, `mqtt_bridge.py`. An API tour page and expanded docs
+  navigation.
 - `RELEASING.md`: the push/Pages/PyPI trusted-publishing runbook.
 
 - Web dashboard (Phase 4), behind the ``dashboard`` extra: a FastAPI +

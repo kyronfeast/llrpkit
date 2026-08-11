@@ -78,6 +78,68 @@ handshake, mode-dependent read rates, TagFocus suppression, antenna events,
 keepalives, temperature. It is the test rig for this project and works just as
 well as one for yours.
 
+## Tag access: read, write, re-label, kill
+
+```python
+result = await reader.read_memory(bank="user", word_count=4, target_epc=epc)
+result.ok, result.data                       # True, b'...'
+await reader.write_memory(bank="user", data="cafebabe", target_epc=epc)
+await reader.write_epc(new_epc, target_epc=old_epc)   # same length required
+await reader.kill_tag(kill_password=0x2A2A2A2A, target_epc=epc)  # permanent!
+```
+
+The full Gen2 access surface via the AccessSpec lifecycle: banks by name
+(`reserved`/`epc`/`tid`/`user`), EPC-targeted with a one-shot stop trigger,
+results parsed into a typed `AccessResult` whose `status` is the reader's
+own result name (`"Tag_Memory_Locked_Error"` and friends). Always pass
+`target_epc` with more than one tag in the field. CLI: `llrpkit read`,
+`llrpkit write`, `llrpkit write-epc`.
+
+## Filters, GPIO, presence, decoding
+
+```python
+async for tag in reader.inventory(epc_filter="e280", filter_action="include"):
+    ...                                       # the reader itself pre-selects
+
+state = await reader.get_gpio()               # {1: "low", ...}, {1: False, ...}
+await reader.set_gpo(2, True)                 # stack light on
+
+from llrpkit import PresenceTracker, decode_epc, ticked_stream
+
+tracker = PresenceTracker(depart_after=2.0)
+async with contextlib.aclosing(ticked_stream(reader.inventory(session=1))) as ticked:
+    async for tag in ticked:                  # TagReport, or None on quiet ticks
+        for event in (*(tracker.observe(tag) if tag else ()), *tracker.check()):
+            print(event.kind, event.epc_hex, event.dwell_s)
+
+decode_epc("3074257bf7194e4000001a85").gs1    # "(01) 80614141123458 (21) 6789"
+```
+
+Select filters run **on the reader** (C1G2 Select), so unwanted tags never
+cost airtime. GPI edges arrive through `reader.events()` as `GPIEvent`
+notifications. `PresenceTracker` turns the read firehose into arrive/depart
+edges (`min_reads` debounces strays; `depart_after` defines gone), and
+`llrpkit.epc` decodes GS1 schemes — SGTIN-96 through GID-96 — into GTINs,
+SSCCs, and pure-identity URIs.
+
+## Capture and surveys
+
+```python
+from llrpkit import TagWriter, sweep
+
+with TagWriter("dock.csv") as writer:         # or .jsonl
+    async for tag in reader.inventory(duration=30):
+        writer.write(tag)
+
+points = await sweep(reader, powers_dbm=[15, 20, 25, 30], seconds=3)
+best = max(points, key=lambda p: (p.unique, p.reads_per_sec))
+```
+
+`TagWriter` exports reads with GS1 decode columns included; `sweep()` is
+the field guide's tuning methodology as a function — reads/s *and* unique
+count per power x mode combination. CLI: `llrpkit inventory --output` and
+`llrpkit sweep`.
+
 ## `llrpkit.dashboard` — the web layer
 
 ```python
