@@ -151,7 +151,7 @@ async def test_dropped_response_times_out() -> None:
 
 async def test_unsupported_message_yields_error_status() -> None:
     async with make_emulator() as emu, LLRPClient("127.0.0.1", emu.port) as client:
-        response = await client.transact(messages.GET_ACCESSSPECS())
+        response = await client.transact(messages.GET_REPORT())
         with pytest.raises(LLRPStatusError) as excinfo:
             check_status(response)
         assert excinfo.value.status_code == 109  # M_UnsupportedMessage

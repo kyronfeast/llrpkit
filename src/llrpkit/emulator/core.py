@@ -127,6 +127,12 @@ class LLRPEmulator:
         self._send_lock = asyncio.Lock()
         self._extensions_enabled = False
         self._rospecs: dict[int, tuple[params.ROSpec, str]] = {}
+        #: AccessSpecs: id -> (spec, enabled); counts track stop triggers.
+        self._accessspecs: dict[int, tuple[params.AccessSpec, bool]] = {}
+        self._access_counts: dict[int, int] = {}
+        #: Per-tag memory banks, keyed by current EPC.
+        self._memories: dict[bytes, dict[int, bytearray]] = {}
+        self._locked_banks: dict[bytes, set[int]] = {}
         self._report_task: asyncio.Task[None] | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
         self._keepalive_acked = asyncio.Event()
@@ -175,6 +181,16 @@ class LLRPEmulator:
     async def wait_keepalive_ack(self, timeout: float = 2.0) -> None:
         async with asyncio.timeout(timeout):
             await self._keepalive_acked.wait()
+
+    def set_tag_passwords(
+        self, epc: bytes, *, access: int | None = None, kill: int | None = None
+    ) -> None:
+        """Test hook: program a tag's access/kill passwords (reserved bank)."""
+        reserved = self._memory_for(epc)[0]
+        if kill is not None:
+            reserved[0:4] = kill.to_bytes(4, "big")
+        if access is not None:
+            reserved[4:8] = access.to_bytes(4, "big")
 
     def set_temperature(self, celsius: float) -> None:
         """Set the temperature reported via the Octane extension."""
@@ -341,13 +357,60 @@ class LLRPEmulator:
                 )
             self._sync_reporting()
             await self._send(messages.DELETE_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
-        elif isinstance(msg, messages.GET_ROSPECS):
-            specs = []
-            for spec, state in self._rospecs.values():
-                spec.current_state = getattr(enums.ROSpecState, state)
-                specs.append(spec)
+        elif isinstance(msg, messages.ADD_ACCESSSPEC):
+            spec = msg.access_spec
+            if spec.access_spec_id in self._accessspecs:
+                status = self._status_error(
+                    enums.StatusCode.M_DuplicateParameter,
+                    f"AccessSpec {spec.access_spec_id} exists",
+                )
+            else:
+                self._accessspecs[spec.access_spec_id] = (spec, False)
+                status = self._status_ok()
+            await self._send(messages.ADD_ACCESSSPEC_RESPONSE(llrp_status=status), message_id=mid)
+        elif isinstance(msg, messages.ENABLE_ACCESSSPEC):
+            for spec_id in list(self._accessspecs):
+                if msg.access_spec_id in (0, spec_id):
+                    self._accessspecs[spec_id] = (self._accessspecs[spec_id][0], True)
             await self._send(
-                messages.GET_ROSPECS_RESPONSE(llrp_status=self._status_ok(), ro_specs=specs),
+                messages.ENABLE_ACCESSSPEC_RESPONSE(llrp_status=self._status_ok()),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.DISABLE_ACCESSSPEC):
+            for spec_id in list(self._accessspecs):
+                if msg.access_spec_id in (0, spec_id):
+                    self._accessspecs[spec_id] = (self._accessspecs[spec_id][0], False)
+            await self._send(
+                messages.DISABLE_ACCESSSPEC_RESPONSE(llrp_status=self._status_ok()),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.DELETE_ACCESSSPEC):
+            for spec_id in list(self._accessspecs):
+                if msg.access_spec_id in (0, spec_id):
+                    del self._accessspecs[spec_id]
+                    self._access_counts.pop(spec_id, None)
+            await self._send(
+                messages.DELETE_ACCESSSPEC_RESPONSE(llrp_status=self._status_ok()),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.GET_ACCESSSPECS):
+            access_specs: list[params.AccessSpec] = []
+            for access_spec, enabled in self._accessspecs.values():
+                access_spec.current_state = enabled
+                access_specs.append(access_spec)
+            await self._send(
+                messages.GET_ACCESSSPECS_RESPONSE(
+                    llrp_status=self._status_ok(), access_specs=access_specs
+                ),
+                message_id=mid,
+            )
+        elif isinstance(msg, messages.GET_ROSPECS):
+            ro_specs: list[params.ROSpec] = []
+            for ro_spec, state in self._rospecs.values():
+                ro_spec.current_state = getattr(enums.ROSpecState, state)
+                ro_specs.append(ro_spec)
+            await self._send(
+                messages.GET_ROSPECS_RESPONSE(llrp_status=self._status_ok(), ro_specs=ro_specs),
                 message_id=mid,
             )
         elif isinstance(msg, messages.CLOSE_CONNECTION):
@@ -603,6 +666,171 @@ class LLRPEmulator:
         antennas -= self._disconnected
         return _ScanProfile(antennas, content, rate_factor, tagfocus, tuple(filters), power_dbm)
 
+    # -- tag memory and access operations ---------------------------------
+
+    def _memory_for(self, epc: bytes) -> dict[int, bytearray]:
+        """Lazily created Gen2 memory banks for the tag currently at ``epc``."""
+        if epc not in self._memories:
+            self._memories[epc] = {
+                0: bytearray(8),  # kill password (words 0-1) + access password (2-3)
+                2: bytearray(b"\xe2\x80\x11\x05" + epc[-8:]),  # matches reported TID
+                3: bytearray(64),  # 32 words of user memory
+            }
+        return self._memories[epc]
+
+    def _bank_bytes(self, epc: bytes, mb: int) -> bytes:
+        if mb == 1:  # EPC bank: CRC word, PC word, then the EPC itself
+            pc = (len(epc) // 2) << 11
+            return b"\x00\x00" + pc.to_bytes(2, "big") + epc
+        return bytes(self._memory_for(epc)[mb])
+
+    def _access_password_of(self, epc: bytes) -> int:
+        return int.from_bytes(self._memory_for(epc)[0][4:8], "big")
+
+    def _kill_password_of(self, epc: bytes) -> int:
+        return int.from_bytes(self._memory_for(epc)[0][0:4], "big")
+
+    def _tagspec_matches(self, tagspec: params.C1G2TagSpec, epc: bytes) -> bool:
+        for pattern in tagspec.c1_g2_target_tags:
+            if pattern.tag_data.bit_len == 0:
+                continue
+            if int(pattern.mb) != 1:
+                return False  # only EPC-bank targeting is modeled
+            matched = _bits_equal(epc, int(pattern.pointer) - 0x20, pattern.tag_data)
+            if matched != bool(pattern.match):
+                return False
+        return True
+
+    def _replace_tag_epc(self, tag: EmulatedTag, new_epc: bytes) -> None:
+        from dataclasses import replace
+
+        index = self.tags.index(tag)
+        self.tags[index] = replace(tag, epc=new_epc)
+        if tag.epc in self._memories:
+            self._memories[new_epc] = self._memories.pop(tag.epc)
+        if tag.epc in self._locked_banks:
+            self._locked_banks[new_epc] = self._locked_banks.pop(tag.epc)
+        if tag.epc in self._focus_counts:
+            self._focus_counts[new_epc] = self._focus_counts.pop(tag.epc)
+
+    def _execute_access(self, tag: EmulatedTag, trd: params.TagReportData) -> None:
+        """Run enabled AccessSpecs against the tag being reported."""
+        for spec_id in list(self._accessspecs):
+            spec, enabled = self._accessspecs[spec_id]
+            if not enabled:
+                continue
+            if not self._tagspec_matches(spec.access_command.air_protocol_tag_spec, tag.epc):
+                continue
+            for op in spec.access_command.access_command_op_specs:
+                result = self._run_access_op(op, tag)
+                if result is not None:
+                    trd.access_command_op_spec_results.append(result)
+            trigger = spec.access_spec_stop_trigger
+            if (
+                int(trigger.access_spec_stop_trigger)
+                == int(enums.AccessSpecStopTriggerType.Operation_Count)
+                and trigger.operation_count_value > 0
+            ):
+                self._access_counts[spec_id] = self._access_counts.get(spec_id, 0) + 1
+                if self._access_counts[spec_id] >= trigger.operation_count_value:
+                    del self._accessspecs[spec_id]
+                    self._access_counts.pop(spec_id, None)
+
+    def _run_access_op(
+        self, op: object, tag: EmulatedTag
+    ) -> (
+        params.C1G2ReadOpSpecResult
+        | params.C1G2WriteOpSpecResult
+        | params.C1G2KillOpSpecResult
+        | params.C1G2LockOpSpecResult
+        | params.C1G2BlockWriteOpSpecResult
+        | None
+    ):
+        epc = tag.epc
+        if isinstance(op, params.C1G2Read):
+            if op.access_password != self._access_password_of(epc):
+                return params.C1G2ReadOpSpecResult(
+                    result=enums.C1G2ReadResultType.Nonspecific_Tag_Error,
+                    op_spec_id=op.op_spec_id,
+                )
+            bank = self._bank_bytes(epc, int(op.mb))
+            start = op.word_pointer * 2
+            end = len(bank) if op.word_count == 0 else start + op.word_count * 2
+            if start >= len(bank) or end > len(bank):
+                return params.C1G2ReadOpSpecResult(
+                    result=enums.C1G2ReadResultType.Nonspecific_Tag_Error,
+                    op_spec_id=op.op_spec_id,
+                )
+            data = bank[start:end]
+            words = [int.from_bytes(data[i : i + 2], "big") for i in range(0, len(data), 2)]
+            return params.C1G2ReadOpSpecResult(
+                result=enums.C1G2ReadResultType.Success,
+                op_spec_id=op.op_spec_id,
+                read_data=words,
+            )
+        if isinstance(op, (params.C1G2Write, params.C1G2BlockWrite)):
+            result_cls = (
+                params.C1G2WriteOpSpecResult
+                if isinstance(op, params.C1G2Write)
+                else params.C1G2BlockWriteOpSpecResult
+            )
+            if op.access_password != self._access_password_of(epc):
+                return result_cls(
+                    result=enums.C1G2WriteResultType.Nonspecific_Tag_Error,
+                    op_spec_id=op.op_spec_id,
+                )
+            if int(op.mb) in self._locked_banks.get(epc, set()):
+                return result_cls(
+                    result=enums.C1G2WriteResultType.Tag_Memory_Locked_Error,
+                    op_spec_id=op.op_spec_id,
+                )
+            payload = b"".join(w.to_bytes(2, "big") for w in op.write_data)
+            if int(op.mb) == 1:
+                offset = (op.word_pointer - 2) * 2  # EPC proper starts at word 2
+                if offset < 0 or offset + len(payload) > len(epc):
+                    return result_cls(
+                        result=enums.C1G2WriteResultType.Tag_Memory_Overrun_Error,
+                        op_spec_id=op.op_spec_id,
+                    )
+                new_epc = epc[:offset] + payload + epc[offset + len(payload) :]
+                self._replace_tag_epc(tag, new_epc)
+            else:
+                bank_mem = self._memory_for(epc)[int(op.mb)]
+                start = op.word_pointer * 2
+                if start + len(payload) > len(bank_mem):
+                    return result_cls(
+                        result=enums.C1G2WriteResultType.Tag_Memory_Overrun_Error,
+                        op_spec_id=op.op_spec_id,
+                    )
+                bank_mem[start : start + len(payload)] = payload
+            return result_cls(
+                result=enums.C1G2WriteResultType.Success,
+                op_spec_id=op.op_spec_id,
+                num_words_written=len(op.write_data),
+            )
+        if isinstance(op, params.C1G2Kill):
+            if op.kill_password == 0:
+                return params.C1G2KillOpSpecResult(
+                    result=enums.C1G2KillResultType.Zero_Kill_Password_Error,
+                    op_spec_id=op.op_spec_id,
+                )
+            if op.kill_password != self._kill_password_of(epc):
+                return params.C1G2KillOpSpecResult(
+                    result=enums.C1G2KillResultType.Nonspecific_Tag_Error,
+                    op_spec_id=op.op_spec_id,
+                )
+            with contextlib.suppress(ValueError):
+                self.tags.remove(tag)  # a killed tag is gone for good
+            return params.C1G2KillOpSpecResult(
+                result=enums.C1G2KillResultType.Success, op_spec_id=op.op_spec_id
+            )
+        if isinstance(op, params.C1G2Lock):
+            return params.C1G2LockOpSpecResult(
+                result=enums.C1G2LockResultType.Nonspecific_Reader_Error,  # not modeled
+                op_spec_id=op.op_spec_id,
+            )
+        return None
+
     @staticmethod
     def _passes_filters(epc: bytes, filters: tuple[tuple[int, int, BitStr, bool], ...]) -> bool:
         """Apply C1G2 select filters; only EPC-bank (mb=1) filters are modeled."""
@@ -675,6 +903,7 @@ class LLRPEmulator:
                     tid = b"\xe2\x80\x11\x05" + tag.epc[-8:]
                     words = [int.from_bytes(tid[i : i + 2], "big") for i in range(0, len(tid), 2)]
                     trd.custom.append(impinj.ImpinjSerializedTID(t_id=words))
+                self._execute_access(tag, trd)
                 await self._send(messages.RO_ACCESS_REPORT(tag_report_datas=[trd]))
         except asyncio.CancelledError:
             raise

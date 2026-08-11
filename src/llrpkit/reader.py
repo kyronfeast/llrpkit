@@ -26,9 +26,56 @@ if TYPE_CHECKING:
 
 from llrpkit.client import LLRPClient, check_status
 from llrpkit.constants import IMPINJ_PEN, LLRP_PORT
-from llrpkit.exceptions import CapabilityError, LLRPConnectionError, LLRPError
+from llrpkit.exceptions import (
+    CapabilityError,
+    LLRPConnectionError,
+    LLRPError,
+    LLRPTimeoutError,
+)
 from llrpkit.inventory import DEFAULT_ROSPEC_ID, TagReport, build_rospec
 from llrpkit.protocol import LLRPMessage, enums, impinj, messages, params
+from llrpkit.protocol.codec import BitStr
+
+#: Gen2 memory banks by name, for the tag-access API.
+MEMORY_BANKS = {"reserved": 0, "epc": 1, "tid": 2, "user": 3}
+
+_ACCESS_SPEC_ID = 0x4C4B  # "LK": the AccessSpec identifier llrpkit manages
+
+
+def _resolve_bank(bank: int | str) -> int:
+    if isinstance(bank, str):
+        try:
+            return MEMORY_BANKS[bank.lower()]
+        except KeyError:
+            raise ValueError(
+                f"unknown memory bank {bank!r}; use one of {sorted(MEMORY_BANKS)}"
+            ) from None
+    if not 0 <= bank <= 3:
+        raise ValueError(f"memory bank must be 0-3, got {bank}")
+    return bank
+
+
+@dataclass(frozen=True)
+class AccessResult:
+    """Outcome of one tag-access operation (read/write/kill).
+
+    ``status`` is the reader's result name (``"Success"`` on success, e.g.
+    ``"Tag_Memory_Locked_Error"`` otherwise). ``ok`` is the boolean shortcut.
+    For reads, ``data`` holds the bytes read; for writes, ``words_written``.
+    """
+
+    epc: bytes
+    status: str
+    data: bytes | None = None
+    words_written: int | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "Success"
+
+    @property
+    def epc_hex(self) -> str:
+        return self.epc.hex()
 
 
 @dataclass(frozen=True)
@@ -270,6 +317,182 @@ class Reader:
             if isinstance(p, impinj.ImpinjReaderTemperature):
                 return float(p.temperature)
         return None
+
+    # -- tag access (read / write / kill) ----------------------------------
+
+    def _access_target(self, target_epc: bytes | str | None) -> params.C1G2TagSpec:
+        if isinstance(target_epc, str):
+            target_epc = bytes.fromhex(target_epc)
+        # LLRP requires at least one target pattern; a zero-length mask is
+        # the spec's way of saying "match every tag".
+        pattern = BitStr.from_bytes(target_epc) if target_epc else BitStr()
+        return params.C1G2TagSpec(
+            c1_g2_target_tags=[
+                params.C1G2TargetTag(
+                    mb=1, match=True, pointer=0x20, tag_mask=pattern, tag_data=pattern
+                )
+            ]
+        )
+
+    async def _run_access(
+        self,
+        op: params.C1G2Read | params.C1G2Write | params.C1G2Kill,
+        target_epc: bytes | str | None,
+        timeout: float,
+    ) -> AccessResult:
+        """Run one access op via the AccessSpec lifecycle and return its result.
+
+        The op executes during inventory rounds on the first tag matching
+        ``target_epc`` (or any tag when no target is given); the AccessSpec
+        is stop-triggered after one execution and deleted on the way out.
+        """
+        client = self.client
+        access_spec = params.AccessSpec(
+            access_spec_id=_ACCESS_SPEC_ID,
+            antenna_id=0,
+            protocol_id=enums.AirProtocols.EPCGlobalClass1Gen2,
+            current_state=False,
+            ro_spec_id=0,
+            access_spec_stop_trigger=params.AccessSpecStopTrigger(
+                access_spec_stop_trigger=enums.AccessSpecStopTriggerType.Operation_Count,
+                operation_count_value=1,
+            ),
+            access_command=params.AccessCommand(
+                air_protocol_tag_spec=self._access_target(target_epc),
+                access_command_op_specs=[op],
+            ),
+        )
+        with contextlib.suppress(LLRPError):  # a stale llrpkit spec is fine to delete
+            await client.transact(messages.DELETE_ACCESSSPEC(access_spec_id=_ACCESS_SPEC_ID))
+        check_status(await client.transact(messages.ADD_ACCESSSPEC(access_spec=access_spec)))
+        try:
+            check_status(
+                await client.transact(messages.ENABLE_ACCESSSPEC(access_spec_id=_ACCESS_SPEC_ID))
+            )
+            stream = self.inventory(duration=timeout)
+            async with contextlib.aclosing(stream):
+                async for tag in stream:
+                    raw = tag.raw
+                    if raw is None or not raw.access_command_op_spec_results:
+                        continue
+                    return self._parse_access_result(tag.epc, raw)
+            raise LLRPTimeoutError(
+                f"no tag answered the access operation within {timeout:.1f}s"
+                + (f" (target {target_epc!r})" if target_epc else "")
+            )
+        finally:
+            with contextlib.suppress(LLRPError, OSError):
+                await client.transact(
+                    messages.DELETE_ACCESSSPEC(access_spec_id=_ACCESS_SPEC_ID), timeout=2.0
+                )
+
+    @staticmethod
+    def _parse_access_result(epc: bytes, raw: params.TagReportData) -> AccessResult:
+        result = raw.access_command_op_spec_results[0]
+        if isinstance(result, params.C1G2ReadOpSpecResult):
+            name = enums.C1G2ReadResultType(int(result.result)).name
+            data = b"".join(w.to_bytes(2, "big") for w in result.read_data)
+            return AccessResult(epc=epc, status=name, data=data if name == "Success" else None)
+        if isinstance(result, (params.C1G2WriteOpSpecResult, params.C1G2BlockWriteOpSpecResult)):
+            name = enums.C1G2WriteResultType(int(result.result)).name
+            return AccessResult(epc=epc, status=name, words_written=result.num_words_written)
+        if isinstance(result, params.C1G2KillOpSpecResult):
+            return AccessResult(epc=epc, status=enums.C1G2KillResultType(int(result.result)).name)
+        if isinstance(result, params.C1G2LockOpSpecResult):
+            return AccessResult(epc=epc, status=enums.C1G2LockResultType(int(result.result)).name)
+        return AccessResult(epc=epc, status=f"Unrecognized_{type(result).__name__}")
+
+    async def read_memory(
+        self,
+        *,
+        bank: int | str = "user",
+        word_pointer: int = 0,
+        word_count: int = 0,
+        target_epc: bytes | str | None = None,
+        access_password: int = 0,
+        timeout: float = 8.0,
+    ) -> AccessResult:
+        """Read tag memory (``word_count=0`` reads the bank to its end).
+
+        Banks by name: ``reserved`` (0), ``epc`` (1), ``tid`` (2), ``user``
+        (3). Without ``target_epc`` the first tag seen answers — always pass
+        a target when more than one tag is in the field.
+        """
+        op = params.C1G2Read(
+            op_spec_id=1,
+            access_password=access_password,
+            mb=_resolve_bank(bank),
+            word_pointer=word_pointer,
+            word_count=word_count,
+        )
+        return await self._run_access(op, target_epc, timeout)
+
+    async def write_memory(
+        self,
+        *,
+        bank: int | str = "user",
+        word_pointer: int = 0,
+        data: bytes | str,
+        target_epc: bytes | str | None = None,
+        access_password: int = 0,
+        timeout: float = 8.0,
+    ) -> AccessResult:
+        """Write word-aligned ``data`` (bytes or hex; even length) to a bank."""
+        if isinstance(data, str):
+            data = bytes.fromhex(data)
+        if len(data) % 2:
+            raise ValueError("write data must be an even number of bytes (Gen2 words)")
+        words = [int.from_bytes(data[i : i + 2], "big") for i in range(0, len(data), 2)]
+        op = params.C1G2Write(
+            op_spec_id=1,
+            access_password=access_password,
+            mb=_resolve_bank(bank),
+            word_pointer=word_pointer,
+            write_data=words,
+        )
+        return await self._run_access(op, target_epc, timeout)
+
+    async def write_epc(
+        self,
+        new_epc: bytes | str,
+        *,
+        target_epc: bytes | str | None = None,
+        access_password: int = 0,
+        timeout: float = 8.0,
+    ) -> AccessResult:
+        """Rewrite a tag's EPC (same length as the current EPC).
+
+        This is a write to EPC memory at word 2. Always pass ``target_epc``
+        when more than one tag can hear the reader — an untargeted EPC write
+        re-labels whichever tag answers first.
+        """
+        if isinstance(new_epc, str):
+            new_epc = bytes.fromhex(new_epc)
+        return await self.write_memory(
+            bank="epc",
+            word_pointer=2,
+            data=new_epc,
+            target_epc=target_epc,
+            access_password=access_password,
+            timeout=timeout,
+        )
+
+    async def kill_tag(
+        self,
+        *,
+        kill_password: int,
+        target_epc: bytes | str,
+        timeout: float = 8.0,
+    ) -> AccessResult:
+        """Permanently silence a tag. Requires its (non-zero) kill password.
+
+        Both arguments are mandatory on purpose: an untargeted kill is never
+        what anyone wants.
+        """
+        if not kill_password:
+            raise ValueError("kill requires the tag's non-zero kill password")
+        op = params.C1G2Kill(op_spec_id=1, kill_password=kill_password)
+        return await self._run_access(op, target_epc, timeout)
 
     async def events(self) -> AsyncGenerator[LLRPMessage, None]:
         """Unsolicited reader notifications (antenna events, exceptions, ...).

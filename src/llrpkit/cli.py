@@ -241,6 +241,133 @@ def inventory(
         asyncio.run(_run_inventory(host, port, inventory_kwargs))
 
 
+def _parse_hex(value: str, flag: str) -> bytes:
+    try:
+        return bytes.fromhex(value)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{flag} {value!r} is not valid hex") from exc
+
+
+def _echo_access(result: Any) -> None:
+    from llrpkit.reader import AccessResult
+
+    assert isinstance(result, AccessResult)
+    if result.ok:
+        detail = ""
+        if result.data is not None:
+            detail = f"  data {result.data.hex()}"
+        if result.words_written is not None:
+            detail = f"  {result.words_written} word(s) written"
+        typer.echo(f"OK  tag {result.epc_hex}{detail}")
+    else:
+        typer.echo(f"FAILED ({result.status})  tag {result.epc_hex}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def read(
+    host: Annotated[str, typer.Argument(help="Reader hostname or IP.")],
+    port: Annotated[int, typer.Option(help="LLRP port.")] = 5084,
+    bank: Annotated[str, typer.Option(help="Memory bank: reserved, epc, tid, or user.")] = "user",
+    word_pointer: Annotated[int, typer.Option(help="First word to read.")] = 0,
+    words: Annotated[int, typer.Option(help="Words to read (0 = to end of bank).")] = 0,
+    epc: Annotated[
+        str | None, typer.Option(help="Target tag EPC (hex prefix); omit for any tag.")
+    ] = None,
+    password: Annotated[int, typer.Option(help="Access password, if the tag has one.")] = 0,
+    timeout: Annotated[float, typer.Option(help="Give up after this many seconds.")] = 8.0,
+) -> None:
+    """Read tag memory (a Gen2 READ via an AccessSpec)."""
+    from llrpkit.reader import Reader
+
+    target = _parse_hex(epc, "--epc") if epc is not None else None
+
+    async def run() -> None:
+        async with Reader(host, port) as reader:
+            _echo_access(
+                await reader.read_memory(
+                    bank=bank,
+                    word_pointer=word_pointer,
+                    word_count=words,
+                    target_epc=target,
+                    access_password=password,
+                    timeout=timeout,
+                )
+            )
+
+    asyncio.run(run())
+
+
+@app.command()
+def write(
+    host: Annotated[str, typer.Argument(help="Reader hostname or IP.")],
+    data: Annotated[str, typer.Option(help="Hex data to write (whole words).")],
+    port: Annotated[int, typer.Option(help="LLRP port.")] = 5084,
+    bank: Annotated[str, typer.Option(help="Memory bank: reserved, epc, tid, or user.")] = "user",
+    word_pointer: Annotated[int, typer.Option(help="First word to write.")] = 0,
+    epc: Annotated[
+        str | None, typer.Option(help="Target tag EPC (hex prefix); omit for any tag.")
+    ] = None,
+    password: Annotated[int, typer.Option(help="Access password, if the tag has one.")] = 0,
+    timeout: Annotated[float, typer.Option(help="Give up after this many seconds.")] = 8.0,
+) -> None:
+    """Write tag memory (a Gen2 WRITE via an AccessSpec)."""
+    from llrpkit.reader import Reader
+
+    payload = _parse_hex(data, "--data")
+    target = _parse_hex(epc, "--epc") if epc is not None else None
+
+    async def run() -> None:
+        async with Reader(host, port) as reader:
+            _echo_access(
+                await reader.write_memory(
+                    bank=bank,
+                    word_pointer=word_pointer,
+                    data=payload,
+                    target_epc=target,
+                    access_password=password,
+                    timeout=timeout,
+                )
+            )
+
+    asyncio.run(run())
+
+
+@app.command(name="write-epc")
+def write_epc(
+    host: Annotated[str, typer.Argument(help="Reader hostname or IP.")],
+    new_epc: Annotated[str, typer.Option(help="The new EPC, in hex (same length).")],
+    port: Annotated[int, typer.Option(help="LLRP port.")] = 5084,
+    epc: Annotated[
+        str | None,
+        typer.Option(help="Target tag EPC (hex). Strongly recommended with >1 tag in field."),
+    ] = None,
+    password: Annotated[int, typer.Option(help="Access password, if the tag has one.")] = 0,
+    timeout: Annotated[float, typer.Option(help="Give up after this many seconds.")] = 8.0,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation prompt.")] = False,
+) -> None:
+    """Rewrite a tag's EPC — the tag is re-labeled for every reader after this."""
+    from llrpkit.reader import Reader
+
+    new = _parse_hex(new_epc, "--new-epc")
+    target = _parse_hex(epc, "--epc") if epc is not None else None
+    if target is None and not yes:
+        typer.confirm(
+            "No --epc target given: the FIRST tag that answers will be re-labeled. Continue?",
+            abort=True,
+        )
+
+    async def run() -> None:
+        async with Reader(host, port) as reader:
+            _echo_access(
+                await reader.write_epc(
+                    new, target_epc=target, access_password=password, timeout=timeout
+                )
+            )
+
+    asyncio.run(run())
+
+
 async def _run_modes(host: str, port: int, dense: bool, fast: bool) -> None:
     from llrpkit.modes import suggest_mode
     from llrpkit.reader import Reader
