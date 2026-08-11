@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from llrpkit.protocol import enums, impinj, params
+from llrpkit.protocol import BitStr, enums, impinj, params
 
 #: The ROSpec identifier llrpkit manages for its own inventory streams.
 DEFAULT_ROSPEC_ID = 1
@@ -94,6 +94,10 @@ def build_rospec(
     hop_table_id: int = 1,
     channel_index: int = 1,
     tag_population: int = 32,
+    epc_filter: bytes | str | None = None,
+    filter_action: str = "include",
+    filter_mb: int = 1,
+    filter_pointer: int = 0x20,
     report_every_n: int = 1,
     duration_ms: int | None = None,
     enable_impinj_reports: bool = False,
@@ -109,6 +113,10 @@ def build_rospec(
     is the C1G2 session (0-3). ``search_mode`` takes an
     :class:`~llrpkit.protocol.impinj.ImpinjInventorySearchType` value —
     TagFocus is ``Single_Target_With_Suppression`` and requires session 1.
+    ``epc_filter`` (bytes or hex string) selects tags by EPC prefix before
+    they are ever inventoried — with ``filter_action="exclude"`` the matching
+    tags are skipped instead. ``filter_mb``/``filter_pointer`` retarget the
+    match for advanced uses (e.g. TID-bank filters).
     ``transmit_power_index`` indexes the reader's transmit power table (see
     ``ReaderCapabilities.power_index_for_dbm``); ``hop_table_id`` and
     ``channel_index`` matter only for frequency-hopping / fixed-channel
@@ -118,12 +126,41 @@ def build_rospec(
         raise ValueError(f"session must be 0-3, got {session}")
     if tag_population < 1:
         raise ValueError(f"tag_population must be positive, got {tag_population}")
+    if isinstance(epc_filter, str):
+        try:
+            epc_filter = bytes.fromhex(epc_filter)
+        except ValueError as exc:
+            raise ValueError(f"epc_filter {epc_filter!r} is not valid hex") from exc
+    if filter_action not in ("include", "exclude"):
+        raise ValueError(f"filter_action must be 'include' or 'exclude', got {filter_action!r}")
     inv_cmd = params.C1G2InventoryCommand(
         tag_inventory_state_aware=False,
         c1_g2_singulation_control=params.C1G2SingulationControl(
             session=session, tag_population=tag_population, tag_transit_time=0
         ),
     )
+    if epc_filter is not None:
+        # A C1G2 select filter: match `epc_filter` as a prefix of EPC memory
+        # (bank 1 from bit 0x20, where the EPC proper begins). "include"
+        # inventories only matching tags; "exclude" inventories the rest.
+        action = (
+            enums.C1G2StateUnawareAction.Select_Unselect
+            if filter_action == "include"
+            else enums.C1G2StateUnawareAction.Unselect_Select
+        )
+        inv_cmd.c1_g2_filters.append(
+            params.C1G2Filter(
+                t=enums.C1G2TruncateAction.Do_Not_Truncate,
+                c1_g2_tag_inventory_mask=params.C1G2TagInventoryMask(
+                    mb=filter_mb,
+                    pointer=filter_pointer,
+                    tag_mask=BitStr.from_bytes(epc_filter),
+                ),
+                c1_g2_tag_inventory_state_unaware_filter_action=(
+                    params.C1G2TagInventoryStateUnawareFilterAction(action=action)
+                ),
+            )
+        )
     if mode_index is not None:
         inv_cmd.c1_g2_rf_control = params.C1G2RFControl(mode_index=mode_index, tari=tari)
     if search_mode is not None:

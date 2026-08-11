@@ -44,6 +44,23 @@ class _ScanProfile:
     content: set[str]
     rate_factor: float
     tagfocus: bool
+    #: Parsed C1G2 select filters: (mb, pointer, pattern, include).
+    filters: tuple[tuple[int, int, BitStr, bool], ...] = ()
+    #: Requested transmit power; scales read rate and weak-tag visibility.
+    power_dbm: float = 30.0
+
+
+def _bits_equal(data: bytes, offset_bits: int, pattern: BitStr) -> bool:
+    """True if ``pattern`` matches ``data`` starting at ``offset_bits``."""
+    if offset_bits < 0 or offset_bits + pattern.bit_len > len(data) * 8:
+        return False
+    for i in range(pattern.bit_len):
+        p = offset_bits + i
+        data_bit = (data[p // 8] >> (7 - p % 8)) & 1
+        pat_bit = (pattern.data[i // 8] >> (7 - i % 8)) & 1
+        if data_bit != pat_bit:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -525,6 +542,8 @@ class LLRPEmulator:
         content: set[str] = set()
         rate_factor = 1.0
         tagfocus = False
+        filters: list[tuple[int, int, BitStr, bool]] = []
+        power_dbm = 30.0
         for spec, state in self._rospecs.values():
             if state != "Active":
                 continue
@@ -538,7 +557,23 @@ class LLRPEmulator:
                     antennas.update(ids)
                 for inv_spec in sp.inventory_parameter_specs:
                     for cfg in inv_spec.antenna_configurations:
+                        if cfg.rf_transmitter is not None and cfg.rf_transmitter.transmit_power:
+                            # Table: index 1..21 -> 10.0..30.0 dBm.
+                            power_dbm = 10.0 + (int(cfg.rf_transmitter.transmit_power) - 1)
                         for cmd in cfg.air_protocol_inventory_command_settings:
+                            for flt in cmd.c1_g2_filters:
+                                mask = flt.c1_g2_tag_inventory_mask
+                                action = flt.c1_g2_tag_inventory_state_unaware_filter_action
+                                include = True
+                                if action is not None:
+                                    include = int(action.action) in (
+                                        int(enums.C1G2StateUnawareAction.Select_Unselect),
+                                        int(enums.C1G2StateUnawareAction.Select_DoNothing),
+                                        int(enums.C1G2StateUnawareAction.DoNothing_Select),
+                                    )
+                                filters.append(
+                                    (int(mask.mb), int(mask.pointer), mask.tag_mask, include)
+                                )
                             session = 1
                             if cmd.c1_g2_singulation_control is not None:
                                 session = int(cmd.c1_g2_singulation_control.session)
@@ -566,16 +601,36 @@ class LLRPEmulator:
                         if custom_param.impinj_enable_serialized_t_id is not None:
                             content.add("tid")
         antennas -= self._disconnected
-        return _ScanProfile(antennas, content, rate_factor, tagfocus)
+        return _ScanProfile(antennas, content, rate_factor, tagfocus, tuple(filters), power_dbm)
+
+    @staticmethod
+    def _passes_filters(epc: bytes, filters: tuple[tuple[int, int, BitStr, bool], ...]) -> bool:
+        """Apply C1G2 select filters; only EPC-bank (mb=1) filters are modeled."""
+        for mb, pointer, pattern, include in filters:
+            if mb != 1:
+                continue
+            matched = _bits_equal(epc, pointer - 0x20, pattern)
+            if matched != include:
+                return False
+        return True
 
     async def _report_loop(self) -> None:
         try:
             while True:
                 profile = self._scan_profile()
-                rate = max(1.0, self.reads_per_sec * profile.rate_factor)
+                # Transmit power scales throughput and decides whether weak
+                # tags are energized at all (visibility rule below).
+                power_scale = 0.55 + 0.45 * (profile.power_dbm - 10.0) / 20.0
+                rate = max(1.0, self.reads_per_sec * profile.rate_factor * power_scale)
                 await asyncio.sleep(1.0 / rate)
                 antennas, content = profile.antennas, profile.content
-                visible = [t for t in self.tags if antennas.intersection(t.antennas)]
+                visible = [
+                    t
+                    for t in self.tags
+                    if antennas.intersection(t.antennas)
+                    and t.rssi_dbm >= -42.0 - profile.power_dbm
+                    and self._passes_filters(t.epc, profile.filters)
+                ]
                 if not visible:
                     continue
                 if profile.tagfocus:

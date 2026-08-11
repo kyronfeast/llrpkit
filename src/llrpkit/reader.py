@@ -301,6 +301,8 @@ class Reader:
         mode_index: int | None = None,
         tx_power_dbm: float | None = None,
         tag_population: int = 32,
+        epc_filter: bytes | str | None = None,
+        filter_action: str = "include",
         report_every_n: int = 1,
         include_phase: bool = False,
         include_doppler: bool = False,
@@ -311,6 +313,8 @@ class Reader:
     ) -> AsyncGenerator[TagReport, None]:
         """Stream tag observations until ``duration``/``max_tags`` or ``break``.
 
+        ``epc_filter`` selects tags by EPC prefix on the reader itself
+        (``filter_action="exclude"`` inverts it) — see ``build_rospec``.
         One inventory stream per reader at a time. The underlying ROSpec is
         created on entry and stopped and deleted on exit, however the stream
         ends. Impinj report content (sub-dBm RSSI, plus phase / Doppler /
@@ -332,6 +336,8 @@ class Reader:
             mode_index=mode_index,
             transmit_power_index=power_index,
             tag_population=tag_population,
+            epc_filter=epc_filter,
+            filter_action=filter_action,
             report_every_n=report_every_n,
             enable_impinj_reports=self._impinj_enabled,
             include_phase=include_phase,

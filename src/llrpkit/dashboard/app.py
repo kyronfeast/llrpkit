@@ -46,6 +46,8 @@ class SettingsBody(BaseModel):
     mode_index: int | None = None
     tx_power_dbm: float | None = None
     tag_population: int = Field(default=32, ge=1)
+    epc_filter: str | None = Field(default=None, pattern=r"^([0-9a-fA-F]{2})+$")
+    filter_action: str = Field(default="include", pattern=r"^(include|exclude)$")
     include_phase: bool = True
     include_doppler: bool = False
     include_tid: bool = False

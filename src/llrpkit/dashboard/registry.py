@@ -43,6 +43,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "mode_index": None,
     "tx_power_dbm": None,
     "tag_population": 32,
+    "epc_filter": None,
+    "filter_action": "include",
     "include_phase": True,
     "include_doppler": False,
     "include_tid": False,

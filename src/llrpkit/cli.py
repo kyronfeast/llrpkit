@@ -119,20 +119,7 @@ def _parse_antennas(value: str) -> list[int]:
         raise typer.BadParameter(f"antenna list {value!r} is not comma-separated integers") from exc
 
 
-async def _run_inventory(
-    host: str,
-    port: int,
-    antennas: list[int],
-    session: int,
-    search_mode: int | None,
-    mode_index: int | None,
-    power: float | None,
-    population: int,
-    phase: bool,
-    tid: bool,
-    duration: float | None,
-    count: int | None,
-) -> int:
+async def _run_inventory(host: str, port: int, inventory_kwargs: dict[str, Any]) -> int:
     from contextlib import aclosing
 
     from llrpkit.reader import Reader
@@ -144,18 +131,7 @@ async def _run_inventory(
             f"{reader.max_antennas} antenna ports"
             + (" (Octane extensions on)" if reader.impinj_extensions_enabled else "")
         )
-        stream = reader.inventory(
-            antennas=antennas,
-            session=session,
-            search_mode=search_mode,
-            mode_index=mode_index,
-            tx_power_dbm=power,
-            tag_population=population,
-            include_phase=phase,
-            include_tid=tid,
-            duration=duration,
-            max_tags=count,
-        )
+        stream = reader.inventory(**inventory_kwargs)
         async with aclosing(stream):
             async for tag in stream:
                 seen += 1
@@ -189,6 +165,14 @@ def inventory(
     tid: Annotated[bool, typer.Option(help="Include serialized TID (Impinj).")] = False,
     duration: Annotated[float | None, typer.Option(help="Stop after this many seconds.")] = None,
     count: Annotated[int | None, typer.Option(help="Stop after this many reports.")] = None,
+    filter_epc: Annotated[
+        str | None,
+        typer.Option(help="Only inventory tags whose EPC starts with this hex prefix."),
+    ] = None,
+    filter_action: Annotated[
+        str,
+        typer.Option(help='With --filter-epc: "include" (default) or "exclude" matches.'),
+    ] = "include",
     mqtt_broker: Annotated[
         str | None,
         typer.Option(
@@ -209,23 +193,32 @@ def inventory(
         raise typer.BadParameter(f"search mode must be one of {', '.join(SEARCH_MODES)}")
     if duration is None and count is None:
         typer.echo("(no --duration or --count given: streaming until Ctrl-C)")
+    if filter_action not in ("include", "exclude"):
+        raise typer.BadParameter('filter action must be "include" or "exclude"')
+    if filter_epc is not None:
+        try:
+            bytes.fromhex(filter_epc)
+        except ValueError as exc:
+            raise typer.BadParameter(f"--filter-epc {filter_epc!r} is not valid hex") from exc
     mode_value = SEARCH_MODES[search_mode.lower()] if search_mode is not None else None
+    inventory_kwargs: dict[str, Any] = {
+        "antennas": _parse_antennas(antennas),
+        "session": session,
+        "search_mode": mode_value,
+        "mode_index": mode,
+        "tx_power_dbm": power,
+        "tag_population": population,
+        "epc_filter": filter_epc,
+        "filter_action": filter_action,
+        "include_phase": phase,
+        "include_tid": tid,
+        "duration": duration,
+        "max_tags": count,
+    }
     if mqtt_broker is not None:
         _require_mqtt()
         import aiomqtt
 
-        inventory_kwargs: dict[str, Any] = {
-            "antennas": _parse_antennas(antennas),
-            "session": session,
-            "search_mode": mode_value,
-            "mode_index": mode,
-            "tx_power_dbm": power,
-            "tag_population": population,
-            "include_phase": phase,
-            "include_tid": tid,
-            "duration": duration,
-            "max_tags": count,
-        }
         try:
             with contextlib.suppress(KeyboardInterrupt):
                 asyncio.run(
@@ -245,22 +238,7 @@ def inventory(
             raise typer.Exit(1) from exc
         return
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(
-            _run_inventory(
-                host,
-                port,
-                _parse_antennas(antennas),
-                session,
-                mode_value,
-                mode,
-                power,
-                population,
-                phase,
-                tid,
-                duration,
-                count,
-            )
-        )
+        asyncio.run(_run_inventory(host, port, inventory_kwargs))
 
 
 async def _run_modes(host: str, port: int, dense: bool, fast: bool) -> None:
