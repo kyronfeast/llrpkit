@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import time
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -24,6 +26,11 @@ app = typer.Typer(
 )
 
 SEARCH_MODES = {"reader": 0, "single": 1, "dual": 2, "tagfocus": 3}
+
+#: Where settings profiles live (shared with the dashboard); LLRPKIT_PROFILE_DIR overrides.
+PROFILE_DIR = Path(
+    os.environ.get("LLRPKIT_PROFILE_DIR", str(Path.home() / ".llrpkit" / "profiles"))
+)
 
 
 def _print_version(value: bool) -> None:
@@ -160,13 +167,20 @@ async def _run_events_mode(
 
 
 async def _run_inventory(
-    host: str, port: int, inventory_kwargs: dict[str, Any], *, show_decode: bool = False
+    host: str,
+    port: int,
+    inventory_kwargs: dict[str, Any],
+    *,
+    show_decode: bool = False,
+    output: str | None = None,
 ) -> int:
     from contextlib import aclosing
 
+    from llrpkit.capture import TagWriter
     from llrpkit.epc import decode_epc
     from llrpkit.reader import Reader
 
+    writer = TagWriter(output).__enter__() if output is not None else None
     seen = 0
     async with Reader(host, port) as reader:
         typer.echo(
@@ -188,8 +202,15 @@ async def _run_inventory(
                     decoded = decode_epc(tag.epc)
                     if decoded is not None:
                         extra += f"  |  {decoded.gs1 or decoded.pure_identity_uri}"
-                typer.echo(f"{tag.epc_hex}  ant {tag.antenna}  {rssi}{extra}")
-    typer.echo(f"{seen} tag report(s)")
+                if writer is not None:
+                    writer.write(tag)
+                else:
+                    typer.echo(f"{tag.epc_hex}  ant {tag.antenna}  {rssi}{extra}")
+    if writer is not None:
+        writer.__exit__(None, None, None)
+        typer.echo(f"{seen} tag report(s) captured to {writer.path}")
+    else:
+        typer.echo(f"{seen} tag report(s)")
     return seen
 
 
@@ -252,8 +273,16 @@ def inventory(
     mqtt_qos: Annotated[int, typer.Option(min=0, max=2, help="QoS for tag messages.")] = 0,
     mqtt_username: Annotated[str | None, typer.Option(help="MQTT username.")] = None,
     mqtt_password: Annotated[str | None, typer.Option(help="MQTT password.")] = None,
+    output: Annotated[
+        str | None,
+        typer.Option(help="Capture reads to this file instead (.csv or .jsonl)."),
+    ] = None,
+    profile: Annotated[
+        str | None,
+        typer.Option(help="Start from a saved settings profile (see 'llrpkit profile')."),
+    ] = None,
 ) -> None:
-    """Stream a live tag inventory to the terminal, or to an MQTT broker."""
+    """Stream a live tag inventory to the terminal, an MQTT broker, or a file."""
     if search_mode is not None and search_mode.lower() not in SEARCH_MODES:
         raise typer.BadParameter(f"search mode must be one of {', '.join(SEARCH_MODES)}")
     if duration is None and count is None:
@@ -266,6 +295,17 @@ def inventory(
         except ValueError as exc:
             raise typer.BadParameter(f"--filter-epc {filter_epc!r} is not valid hex") from exc
     mode_value = SEARCH_MODES[search_mode.lower()] if search_mode is not None else None
+    profile_kwargs: dict[str, Any] = {}
+    if profile is not None:
+        from llrpkit.profiles import InventoryProfile
+
+        path = PROFILE_DIR / f"{profile}.json"
+        if not path.is_file():
+            raise typer.BadParameter(f"no profile {profile!r} in {PROFILE_DIR}")
+        loaded = InventoryProfile.load(path).inventory_kwargs()
+        loaded.pop("keepalive_ms", None)
+        profile_kwargs = loaded
+        typer.echo(f"(profile {profile!r}: {path})")
     inventory_kwargs: dict[str, Any] = {
         "antennas": _parse_antennas(antennas),
         "session": session,
@@ -280,6 +320,20 @@ def inventory(
         "duration": duration,
         "max_tags": count,
     }
+    # profile values fill in wherever the command line kept the default
+    defaults: dict[str, Any] = {
+        "antennas": [],
+        "session": 1,
+        "search_mode": None,
+        "mode_index": None,
+        "tx_power_dbm": None,
+        "tag_population": 32,
+        "include_phase": False,
+        "include_tid": False,
+    }
+    for key, value in profile_kwargs.items():
+        if key in inventory_kwargs and inventory_kwargs.get(key) == defaults.get(key):
+            inventory_kwargs[key] = list(value) if isinstance(value, tuple) else value
     if mqtt_broker is not None:
         _require_mqtt()
         import aiomqtt
@@ -309,7 +363,7 @@ def inventory(
             asyncio.run(_run_events_mode(host, port, inventory_kwargs, depart_after))
         return
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run_inventory(host, port, inventory_kwargs, show_decode=decode))
+        asyncio.run(_run_inventory(host, port, inventory_kwargs, show_decode=decode, output=output))
 
 
 @app.command()
@@ -466,6 +520,148 @@ def write_epc(
             )
 
     asyncio.run(run())
+
+
+@app.command()
+def sweep(
+    host: Annotated[str, typer.Argument(help="Reader hostname or IP.")],
+    port: Annotated[int, typer.Option(help="LLRP port.")] = 5084,
+    powers: Annotated[
+        str | None, typer.Option(help="Comma-separated dBm values, e.g. 15,20,25,30.")
+    ] = None,
+    modes: Annotated[
+        str | None, typer.Option(help="Comma-separated RF mode indexes, e.g. 0,2,1002.")
+    ] = None,
+    seconds: Annotated[float, typer.Option(help="Measurement time per combination.")] = 3.0,
+    session: Annotated[int, typer.Option(min=0, max=3, help="C1G2 session (0-3).")] = 1,
+) -> None:
+    """Survey power and RF-mode settings: reads/s and unique tags for each."""
+    from llrpkit.reader import Reader
+    from llrpkit.survey import sweep as run_sweep
+
+    if powers is None and modes is None:
+        raise typer.BadParameter("give --powers and/or --modes to sweep over")
+    try:
+        power_list = [float(x) for x in powers.split(",")] if powers else None
+        mode_list = [int(x) for x in modes.split(",")] if modes else None
+    except ValueError as exc:
+        raise typer.BadParameter(f"could not parse sweep values: {exc}") from exc
+
+    async def run() -> None:
+        async with Reader(host, port) as reader:
+            typer.echo(
+                f"sweeping {len(power_list or [None])} power(s) x "
+                f"{len(mode_list or [None])} mode(s), {seconds:.1f}s each\n"
+            )
+            points = await run_sweep(
+                reader,
+                powers_dbm=list(power_list) if power_list else None,
+                mode_indexes=list(mode_list) if mode_list else None,
+                seconds=seconds,
+                session=session,
+            )
+            typer.echo(f"{'power':>7}  {'mode':>6}  {'reads/s':>8}  {'unique':>6}")
+            for point in points:
+                power_text = f"{point.tx_power_dbm:.1f}" if point.tx_power_dbm else "-"
+                mode_text = str(point.mode_index) if point.mode_index is not None else "-"
+                typer.echo(
+                    f"{power_text:>7}  {mode_text:>6}  {point.reads_per_sec:>8.1f}"
+                    f"  {point.unique:>6}"
+                )
+            best = max(points, key=lambda p: (p.unique, p.reads_per_sec))
+            best_power = f"{best.tx_power_dbm:.1f} dBm" if best.tx_power_dbm else "default power"
+            best_mode = f"mode {best.mode_index}" if best.mode_index is not None else "default mode"
+            typer.echo(
+                f"\nbest coverage: {best_power}, {best_mode} "
+                f"({best.unique} unique @ {best.reads_per_sec:.1f} reads/s)"
+            )
+
+    asyncio.run(run())
+
+
+profile_app = typer.Typer(no_args_is_help=True, help="Saved inventory settings profiles.")
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.command("list")
+def profile_list() -> None:
+    """List saved profiles."""
+    if not PROFILE_DIR.is_dir() or not any(PROFILE_DIR.glob("*.json")):
+        typer.echo(f"no profiles saved yet (directory: {PROFILE_DIR})")
+        return
+    from llrpkit.profiles import InventoryProfile
+
+    for path in sorted(PROFILE_DIR.glob("*.json")):
+        try:
+            loaded = InventoryProfile.load(path)
+        except (ValueError, TypeError, OSError):
+            typer.echo(f"{path.stem:<20} (unreadable)")
+            continue
+        bits = [f"session {loaded.session}"]
+        if loaded.search_mode is not None:
+            bits.append(f"search {loaded.search_mode}")
+        if loaded.mode_index is not None:
+            bits.append(f"mode {loaded.mode_index}")
+        if loaded.tx_power_dbm is not None:
+            bits.append(f"{loaded.tx_power_dbm} dBm")
+        typer.echo(f"{path.stem:<20} {', '.join(bits)}")
+
+
+@profile_app.command("show")
+def profile_show(name: Annotated[str, typer.Argument(help="Profile name.")]) -> None:
+    """Show one profile's settings."""
+    path = PROFILE_DIR / f"{name}.json"
+    if not path.is_file():
+        typer.echo(f"no profile {name!r} in {PROFILE_DIR}")
+        raise typer.Exit(1)
+    typer.echo(path.read_text().strip())
+
+
+@profile_app.command("save")
+def profile_save(
+    name: Annotated[str, typer.Argument(help="Profile name.")],
+    session: Annotated[int, typer.Option(min=0, max=3)] = 1,
+    search_mode: Annotated[
+        str | None, typer.Option(help="reader, single, dual, or tagfocus.")
+    ] = None,
+    mode: Annotated[int | None, typer.Option(help="RF mode index.")] = None,
+    power: Annotated[float | None, typer.Option(help="Transmit power in dBm.")] = None,
+    antennas: Annotated[str, typer.Option(help="Comma-separated ports; 0 = all.")] = "0",
+    population: Annotated[int, typer.Option(help="Estimated tag population.")] = 32,
+    phase: Annotated[bool, typer.Option(help="Include RF phase.")] = False,
+    tid: Annotated[bool, typer.Option(help="Include serialized TID.")] = False,
+    description: Annotated[str, typer.Option(help="Free-text note.")] = "",
+) -> None:
+    """Save a settings profile for --profile and the dashboard."""
+    from llrpkit.profiles import InventoryProfile
+
+    if search_mode is not None and search_mode.lower() not in SEARCH_MODES:
+        raise typer.BadParameter(f"search mode must be one of {', '.join(SEARCH_MODES)}")
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    saved = InventoryProfile(
+        name=name,
+        description=description,
+        antennas=tuple(_parse_antennas(antennas)),
+        session=session,
+        search_mode=SEARCH_MODES[search_mode.lower()] if search_mode else None,
+        mode_index=mode,
+        tx_power_dbm=power,
+        tag_population=population,
+        include_phase=phase,
+        include_tid=tid,
+    ).save(PROFILE_DIR / f"{name}.json")
+    typer.echo(f"saved {saved}")
+
+
+@profile_app.command("delete")
+def profile_delete(name: Annotated[str, typer.Argument(help="Profile name.")]) -> None:
+    """Delete a saved profile."""
+    path = PROFILE_DIR / f"{name}.json"
+    if not path.is_file():
+        typer.echo(f"no profile {name!r} in {PROFILE_DIR}")
+        raise typer.Exit(1)
+    path.unlink()
+    typer.echo(f"deleted {path}")
 
 
 @app.command()

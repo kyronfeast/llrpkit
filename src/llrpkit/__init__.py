@@ -33,6 +33,7 @@ from llrpkit.exceptions import (
 from llrpkit.health import HealthAlert, HealthMonitor
 from llrpkit.inventory import TagReport
 from llrpkit.modes import AnnotatedMode, ModeGuidance, annotate_modes, suggest_mode
+from llrpkit.presence import PresenceEvent, PresenceTracker, ticked_stream
 from llrpkit.profiles import InventoryProfile
 from llrpkit.reader import (
     AccessResult,
@@ -41,6 +42,7 @@ from llrpkit.reader import (
     ReaderCapabilities,
     RFMode,
 )
+from llrpkit.survey import SweepPoint, sweep
 
 __all__ = [
     "IMPINJ_PEN",
@@ -64,12 +66,18 @@ __all__ = [
     "MessageDecodeError",
     "MessageEncodeError",
     "ModeGuidance",
+    "PresenceEvent",
+    "PresenceTracker",
     "RFMode",
     "Reader",
     "ReaderCapabilities",
+    "SweepPoint",
     "TagReport",
+    "TagWriter",
     "__version__",
     "annotate_modes",
     "decode_epc",
     "suggest_mode",
+    "sweep",
+    "ticked_stream",
 ]
