@@ -367,7 +367,7 @@ class LLRPEmulator:
                 int(enums.GetReaderConfigRequestedData.GPIPortCurrentState),
             ):
                 for port in sorted(self._gpi_config):
-                    state = (
+                    gpi_state = (
                         (
                             enums.GPIPortState.High
                             if self._gpi_high[port]
@@ -378,7 +378,7 @@ class LLRPEmulator:
                     )
                     response.gpi_port_current_states.append(
                         params.GPIPortCurrentState(
-                            gpi_port_num=port, config=self._gpi_config[port], state=state
+                            gpi_port_num=port, config=self._gpi_config[port], state=gpi_state
                         )
                     )
             if requested in (
