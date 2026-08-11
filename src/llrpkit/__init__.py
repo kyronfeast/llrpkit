@@ -20,6 +20,7 @@ from llrpkit.constants import (
     MESSAGE_HEADER_LEN,
     LLRPVersion,
 )
+from llrpkit.epc import DecodedEPC, decode_epc
 from llrpkit.exceptions import (
     CapabilityError,
     LLRPConnectionError,
@@ -33,15 +34,24 @@ from llrpkit.health import HealthAlert, HealthMonitor
 from llrpkit.inventory import TagReport
 from llrpkit.modes import AnnotatedMode, ModeGuidance, annotate_modes, suggest_mode
 from llrpkit.profiles import InventoryProfile
-from llrpkit.reader import Reader, ReaderCapabilities, RFMode
+from llrpkit.reader import (
+    AccessResult,
+    GPIOState,
+    Reader,
+    ReaderCapabilities,
+    RFMode,
+)
 
 __all__ = [
     "IMPINJ_PEN",
     "LLRP_PORT",
     "LLRP_TLS_PORT",
     "MESSAGE_HEADER_LEN",
+    "AccessResult",
     "AnnotatedMode",
     "CapabilityError",
+    "DecodedEPC",
+    "GPIOState",
     "HealthAlert",
     "HealthMonitor",
     "InventoryProfile",
@@ -60,5 +70,6 @@ __all__ = [
     "TagReport",
     "__version__",
     "annotate_modes",
+    "decode_epc",
     "suggest_mode",
 ]

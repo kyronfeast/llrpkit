@@ -119,9 +119,12 @@ def _parse_antennas(value: str) -> list[int]:
         raise typer.BadParameter(f"antenna list {value!r} is not comma-separated integers") from exc
 
 
-async def _run_inventory(host: str, port: int, inventory_kwargs: dict[str, Any]) -> int:
+async def _run_inventory(
+    host: str, port: int, inventory_kwargs: dict[str, Any], *, show_decode: bool = False
+) -> int:
     from contextlib import aclosing
 
+    from llrpkit.epc import decode_epc
     from llrpkit.reader import Reader
 
     seen = 0
@@ -141,6 +144,10 @@ async def _run_inventory(host: str, port: int, inventory_kwargs: dict[str, Any])
                     extra += f"  phase {tag.phase_deg:6.1f}°"
                 if tag.tid is not None:
                     extra += f"  tid {tag.tid.hex()}"
+                if show_decode:
+                    decoded = decode_epc(tag.epc)
+                    if decoded is not None:
+                        extra += f"  |  {decoded.gs1 or decoded.pure_identity_uri}"
                 typer.echo(f"{tag.epc_hex}  ant {tag.antenna}  {rssi}{extra}")
     typer.echo(f"{seen} tag report(s)")
     return seen
@@ -173,6 +180,9 @@ def inventory(
         str,
         typer.Option(help='With --filter-epc: "include" (default) or "exclude" matches.'),
     ] = "include",
+    decode: Annotated[
+        bool, typer.Option("--decode", help="Decode GS1 EPCs (GTIN/SSCC/...) inline.")
+    ] = False,
     mqtt_broker: Annotated[
         str | None,
         typer.Option(
@@ -238,7 +248,36 @@ def inventory(
             raise typer.Exit(1) from exc
         return
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run_inventory(host, port, inventory_kwargs))
+        asyncio.run(_run_inventory(host, port, inventory_kwargs, show_decode=decode))
+
+
+@app.command()
+def decode(
+    epcs: Annotated[list[str], typer.Argument(help="One or more EPCs in hex.")],
+) -> None:
+    """Decode GS1 EPC encodings (SGTIN/SSCC/SGLN/GRAI/GIAI/GID-96)."""
+    from llrpkit.epc import decode_epc
+
+    failed = False
+    for value in epcs:
+        try:
+            decoded = decode_epc(value)
+        except ValueError:
+            decoded = None
+        if decoded is None:
+            typer.echo(f"{value}: not a GS1 96-bit EPC encoding")
+            failed = True
+            continue
+        typer.echo(f"{value}:")
+        typer.echo(f"  scheme    {decoded.scheme}")
+        typer.echo(f"  tag URI   {decoded.tag_uri}")
+        typer.echo(f"  identity  {decoded.pure_identity_uri}")
+        for key, field_value in decoded.fields.items():
+            typer.echo(f"  {key:<18} {field_value}")
+        if decoded.gs1:
+            typer.echo(f"  GS1       {decoded.gs1}")
+    if failed:
+        raise typer.Exit(1)
 
 
 def _parse_hex(value: str, flag: str) -> bytes:
