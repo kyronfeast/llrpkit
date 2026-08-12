@@ -46,6 +46,17 @@ in-package emulator, then hardened by an adversarial pre-release QA pass
 
 ### Added
 
+- **Webhook delivery**, behind the ``webhook`` extra:
+  `llrpkit.webhook.WebhookSink` / `llrpkit inventory --webhook URL
+  --webhook-token T [--webhook-tags]` POSTs batched JSON straight to an
+  HTTP endpoint (one consumer, no broker): body `{reader, token, events}`,
+  uniform entries with `epc` the only required key, batches ≤500,
+  200/403/400 semantics with bounded retry buffering. Tested against a
+  real in-process receiver implementing the contract.
+- **Pinned wire schemas** for every downstream surface — MQTT
+  `{base}/tags` and `{base}/events` payloads and the webhook contract —
+  documented in `docs/integration.md` and locked by schema tests so field
+  names cannot drift under a consumer.
 - **Tag select filters**: `epc_filter`/`filter_action` on
   `Reader.inventory()`/`build_rospec()` (C1G2 Select, include or exclude,
   retargetable via `filter_mb`/`filter_pointer`), CLI `--filter-epc

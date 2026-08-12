@@ -34,7 +34,9 @@ Beyond the core: **tag select filters** (reader-side EPC prefix include/exclude)
 **GPIO** (outputs, GPI events), **GS1 EPC decoding** (SGTIN/SSCC/SGLN/GRAI/GIAI/GID-96
 to GTINs and pure-identity URIs), **presence events** (arrive/depart with dwell —
 the IoT interface's entry/exit, LLRP-side), an **MQTT bridge** (tags, presence
-events, retained availability with a Last Will), **capture** to CSV/JSONL,
+events, retained availability with a Last Will), **webhook delivery**
+(batched HTTP POSTs straight to your ERP — pinned contract in
+`docs/integration.md`), **capture** to CSV/JSONL,
 **power/mode surveys**, and **settings profiles** shared between CLI and
 dashboard. `docs/comparison.md` maps all of it against sllurp, the Octane SDK,
 ItemTest, and the IoT Device Interface.
