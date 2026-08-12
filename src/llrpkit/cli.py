@@ -73,6 +73,46 @@ def _parse_broker(value: str) -> tuple[str, int]:
         raise typer.BadParameter(f"broker port {port_text!r} is not an integer") from exc
 
 
+def _require_webhook() -> None:
+    try:
+        import httpx  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - depends on install flavor
+        typer.echo(
+            'Webhook posting needs the "webhook" extra:\n\n    pip install "llrpkit[webhook]"\n'
+        )
+        raise typer.Exit(1) from exc
+
+
+async def _run_inventory_webhook(
+    host: str,
+    port: int,
+    url: str,
+    token: str | None,
+    include_tags: bool,
+    depart_after: float,
+    inventory_kwargs: dict[str, Any],
+) -> int:
+    from llrpkit.reader import Reader
+    from llrpkit.webhook import WebhookSink
+
+    async with Reader(host, port) as reader:
+        typer.echo(
+            f"connected: model {reader.model_number}, firmware {reader.firmware!r}, "
+            f"{reader.max_antennas} antenna ports"
+            + (" (Octane extensions on)" if reader.impinj_extensions_enabled else "")
+        )
+        sink = WebhookSink(url, token=token, include_tags=include_tags, depart_after=depart_after)
+        typer.echo(
+            f"posting → {url}  (presence events{' + raw reads' if include_tags else ''}, "
+            f"batches ≤{sink.batch_max})"
+        )
+        posted = await sink.run(reader, **inventory_kwargs)
+        if sink.dropped:
+            typer.echo(f"warning: {sink.dropped} entries dropped while the endpoint was down")
+    typer.echo(f"{posted} event(s) posted in {sink.batches} batch(es)")
+    return posted
+
+
 def _require_mqtt() -> None:
     try:
         import aiomqtt  # noqa: F401
@@ -259,6 +299,17 @@ def inventory(
             help="With --mqtt-broker: also publish arrive/depart events.",
         ),
     ] = False,
+    webhook: Annotated[
+        str | None,
+        typer.Option(help="POST presence events to this HTTP endpoint instead of the terminal."),
+    ] = None,
+    webhook_token: Annotated[
+        str | None, typer.Option(help="Auth token sent in the webhook body.")
+    ] = None,
+    webhook_tags: Annotated[
+        bool,
+        typer.Option("--webhook-tags", help="Also POST every raw read (high volume)."),
+    ] = False,
     mqtt_broker: Annotated[
         str | None,
         typer.Option(
@@ -334,6 +385,31 @@ def inventory(
     for key, value in profile_kwargs.items():
         if key in inventory_kwargs and inventory_kwargs.get(key) == defaults.get(key):
             inventory_kwargs[key] = list(value) if isinstance(value, tuple) else value
+    if mqtt_broker is not None and webhook is not None:
+        raise typer.BadParameter("choose one sink: --mqtt-broker or --webhook, not both")
+    if webhook is not None:
+        _require_webhook()
+        import httpx
+
+        from llrpkit.webhook import WebhookError
+
+        try:
+            with contextlib.suppress(KeyboardInterrupt):
+                asyncio.run(
+                    _run_inventory_webhook(
+                        host,
+                        port,
+                        webhook,
+                        webhook_token,
+                        webhook_tags,
+                        depart_after,
+                        inventory_kwargs,
+                    )
+                )
+        except (WebhookError, httpx.HTTPError) as exc:
+            typer.echo(f"webhook error: {exc}")
+            raise typer.Exit(1) from exc
+        return
     if mqtt_broker is not None:
         _require_mqtt()
         import aiomqtt

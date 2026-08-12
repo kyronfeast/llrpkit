@@ -31,7 +31,8 @@ pytest.importorskip("aiomqtt")
 
 import aiomqtt
 
-from llrpkit.mqtt import MQTTBridge, _resurface_swallowed_cancel, tag_payload
+from llrpkit._cancel import resurface_swallowed_cancel as _resurface_swallowed_cancel
+from llrpkit.mqtt import MQTTBridge, tag_payload
 
 MOSQUITTO = shutil.which("mosquitto")
 needs_broker = pytest.mark.skipif(MOSQUITTO is None, reason="mosquitto broker not installed")
