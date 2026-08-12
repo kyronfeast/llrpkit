@@ -18,11 +18,23 @@ control plane. One :class:`MQTTBridge` publishes one reader's stream::
 Topics under ``base_topic``:
 
 ``{base}/tags``
-    One JSON object per tag observation (see :func:`tag_payload`).
+    One JSON object per tag observation (see :func:`tag_payload`); keys are
+    pinned: ``reader``, ``epc``, ``antenna``, ``rssi_dbm``, ``phase_deg``,
+    ``doppler_hz``, ``channel``, ``tid``, ``at``.
 ``{base}/events``
     With ``publish_events=True``: arrive/depart presence edges
     (see :mod:`llrpkit.presence`) — the LLRP-side counterpart of the IoT
-    interface's tag entry/exit events.
+    interface's tag entry/exit events. The payload schema is **pinned**
+    (consumers may rely on these exact keys; additions may come, renames
+    and removals will not)::
+
+        {"event": "arrived" | "departed",
+         "reader": "<label>",            # bridge's reader_label
+         "epc": "<hex>",
+         "antenna": <int> | null,
+         "dwell_s": <float> | null,      # departed only; null on arrivals
+         "reads": <int>,                 # reads during the visit
+         "at": <float>}                  # epoch seconds
 ``{base}/status``
     Retained ``{"status": "online"|"offline", ...}``. The *offline* payload
     is registered as the MQTT Last Will, so the broker publishes it even if
@@ -45,8 +57,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from llrpkit._cancel import resurface_swallowed_cancel as _resurface_swallowed_cancel
 from llrpkit.inventory import TagReport
-from llrpkit.presence import PresenceTracker, ticked_stream
+from llrpkit.presence import PresenceEvent, PresenceTracker, ticked_stream
 from llrpkit.reader import Reader
 
 try:
@@ -56,26 +69,7 @@ except ImportError as _exc:  # pragma: no cover - depends on install flavor
         'llrpkit.mqtt needs the "mqtt" extra:\n\n    pip install "llrpkit[mqtt]"\n'
     ) from _exc
 
-__all__ = ["MQTTBridge", "tag_payload"]
-
-
-def _resurface_swallowed_cancel() -> None:
-    """Re-raise a task cancellation that third-party code consumed.
-
-    Python 3.11's ``asyncio.wait_for`` can catch an external ``Task.cancel()``
-    that races the awaited future completing and return the value instead of
-    re-raising (python/cpython#86296). llrpkit's own waits use
-    ``asyncio.timeout`` and are immune, but aiomqtt acknowledges QoS>0
-    publishes through ``wait_for`` — so at high tag rates a cancel aimed at
-    the bridge can be eaten by a PUBACK arriving in the same event-loop tick.
-    A swallowed cancel leaves ``Task.cancelling() > 0`` with nothing pending;
-    checking after each third-party await turns "silently un-cancelled" back
-    into prompt cancellation. Found by this bridge's own regression test —
-    the same failure mode as QA-9 in QA_REPORT.md, one dependency down.
-    """
-    task = asyncio.current_task()
-    if task is not None and task.cancelling():
-        raise asyncio.CancelledError
+__all__ = ["MQTTBridge", "event_payload", "tag_payload"]
 
 
 def tag_payload(tag: TagReport, reader: str) -> dict[str, Any]:
@@ -94,6 +88,22 @@ def tag_payload(tag: TagReport, reader: str) -> dict[str, Any]:
         "doppler_hz": tag.doppler_hz,
         "channel": tag.channel_index,
         "tid": tag.tid.hex() if tag.tid is not None else None,
+        "at": round(time.time(), 3),
+    }
+
+
+def event_payload(edge: PresenceEvent, reader: str) -> dict[str, Any]:
+    """The JSON-ready shape published to ``{base}/events`` for one edge.
+
+    This schema is pinned — downstream consumers rely on these exact keys.
+    """
+    return {
+        "event": edge.kind,
+        "reader": reader,
+        "epc": edge.epc_hex,
+        "antenna": edge.antenna,
+        "dwell_s": round(edge.dwell_s, 2) if edge.dwell_s is not None else None,
+        "reads": edge.reads,
         "at": round(time.time(), 3),
     }
 
@@ -193,21 +203,7 @@ class MQTTBridge:
                             for edge in edges:
                                 await client.publish(
                                     self.events_topic,
-                                    json.dumps(
-                                        {
-                                            "event": edge.kind,
-                                            "reader": label,
-                                            "epc": edge.epc_hex,
-                                            "antenna": edge.antenna,
-                                            "dwell_s": (
-                                                round(edge.dwell_s, 2)
-                                                if edge.dwell_s is not None
-                                                else None
-                                            ),
-                                            "reads": edge.reads,
-                                            "at": round(time.time(), 3),
-                                        }
-                                    ),
+                                    json.dumps(event_payload(edge, label)),
                                     qos=1,
                                 )
                                 _resurface_swallowed_cancel()

@@ -202,3 +202,53 @@ async def test_ticked_stream_survives_quiet_and_cancels_cleanly() -> None:
             assert response.ro_specs == [], "quiet-cancel must still delete the ROSpec"
         finally:
             await reader.close()
+
+
+def test_events_payload_schema_is_pinned() -> None:
+    """Downstream consumers build against these exact keys — never rename."""
+    pytest.importorskip("aiomqtt")
+    from llrpkit.mqtt import event_payload
+    from llrpkit.presence import PresenceEvent
+
+    arrived = event_payload(
+        PresenceEvent(kind="arrived", epc=b"\xe2\x01" + b"\x00" * 10, antenna=3, at=1.0, reads=2),
+        "dock1",
+    )
+    assert list(arrived) == ["event", "reader", "epc", "antenna", "dwell_s", "reads", "at"]
+    assert arrived["event"] == "arrived"
+    assert arrived["reader"] == "dock1"
+    assert arrived["epc"] == "e201" + "00" * 10
+    assert arrived["antenna"] == 3
+    assert arrived["dwell_s"] is None
+    assert arrived["reads"] == 2
+    departed = event_payload(
+        PresenceEvent(
+            kind="departed",
+            epc=b"\xe2\x02" + b"\x00" * 10,
+            antenna=None,
+            at=9.0,
+            dwell_s=4.567,
+            reads=18,
+        ),
+        "dock1",
+    )
+    assert departed["dwell_s"] == 4.57
+    assert departed["antenna"] is None
+
+
+def test_tags_payload_schema_is_pinned() -> None:
+    pytest.importorskip("aiomqtt")
+    from llrpkit.mqtt import tag_payload
+
+    row = tag_payload(TagReport(epc=b"\xe2" * 12), "r1")
+    assert list(row) == [
+        "reader",
+        "epc",
+        "antenna",
+        "rssi_dbm",
+        "phase_deg",
+        "doppler_hz",
+        "channel",
+        "tid",
+        "at",
+    ]
