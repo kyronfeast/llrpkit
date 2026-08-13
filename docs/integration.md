@@ -63,7 +63,9 @@ so the broker itself announces an ungraceful death:
 ## Webhook contract (pinned)
 
 With `llrpkit inventory --webhook URL --webhook-token TOKEN` (or
-`llrpkit.webhook.WebhookSink`), llrpkit POSTs batched JSON:
+`llrpkit.webhook.WebhookSink`), llrpkit POSTs batched JSON. The `reader`
+value defaults to `host:port`; set a meaningful name with `--reader-label
+dock-door-1` (applies to MQTT payloads too):
 
 ```json
 {"reader": "dock-door-1",

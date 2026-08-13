@@ -91,6 +91,7 @@ async def _run_inventory_webhook(
     include_tags: bool,
     depart_after: float,
     inventory_kwargs: dict[str, Any],
+    reader_label: str | None = None,
 ) -> int:
     from llrpkit.reader import Reader
     from llrpkit.webhook import WebhookSink
@@ -106,7 +107,7 @@ async def _run_inventory_webhook(
             f"posting → {url}  (presence events{' + raw reads' if include_tags else ''}, "
             f"batches ≤{sink.batch_max})"
         )
-        posted = await sink.run(reader, **inventory_kwargs)
+        posted = await sink.run(reader, reader_label=reader_label, **inventory_kwargs)
         if sink.dropped:
             typer.echo(f"warning: {sink.dropped} entries dropped while the endpoint was down")
     typer.echo(f"{posted} event(s) posted in {sink.batches} batch(es)")
@@ -133,6 +134,7 @@ async def _run_inventory_mqtt(
     *,
     publish_events: bool = False,
     depart_after: float = 2.0,
+    reader_label: str | None = None,
 ) -> int:
     from llrpkit.mqtt import MQTTBridge
     from llrpkit.reader import Reader
@@ -157,7 +159,7 @@ async def _run_inventory_mqtt(
             f"publishing → mqtt://{broker[0]}:{broker[1]}  "
             f"tags on {bridge.tags_topic!r}, status on {bridge.status_topic!r}"
         )
-        published = await bridge.run(reader, **inventory_kwargs)
+        published = await bridge.run(reader, reader_label=reader_label, **inventory_kwargs)
     typer.echo(f"{published} tag report(s) published")
     return published
 
@@ -310,6 +312,12 @@ def inventory(
         bool,
         typer.Option("--webhook-tags", help="Also POST every raw read (high volume)."),
     ] = False,
+    reader_label: Annotated[
+        str | None,
+        typer.Option(
+            help='Reader name in MQTT/webhook payloads (e.g. "dock-door-1"; default: host:port).'
+        ),
+    ] = None,
     mqtt_broker: Annotated[
         str | None,
         typer.Option(
@@ -404,6 +412,7 @@ def inventory(
                         webhook_tags,
                         depart_after,
                         inventory_kwargs,
+                        reader_label,
                     )
                 )
         except (WebhookError, httpx.HTTPError) as exc:
@@ -428,6 +437,7 @@ def inventory(
                         inventory_kwargs,
                         publish_events=mqtt_events,
                         depart_after=depart_after,
+                        reader_label=reader_label,
                     )
                 )
         except aiomqtt.MqttError as exc:

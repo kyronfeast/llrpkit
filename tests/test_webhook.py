@@ -250,6 +250,8 @@ def test_cli_inventory_posts_to_webhook() -> None:
                     receiver.url,
                     "--webhook-token",
                     TOKEN,
+                    "--reader-label",
+                    "dock-door-1",
                     "--duration",
                     "1.5",
                 ],
@@ -259,6 +261,7 @@ def test_cli_inventory_posts_to_webhook() -> None:
         assert "event(s) posted" in result.output
         assert receiver.entries, "receiver saw nothing from the CLI"
         assert all("epc" in entry for entry in receiver.entries)
+        assert all(body["reader"] == "dock-door-1" for body in receiver.bodies)
     finally:
         server_box["server"].should_exit = True
         thread.join(timeout=10.0)
