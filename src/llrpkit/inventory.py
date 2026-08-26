@@ -38,6 +38,10 @@ class TagReport:
     phase_deg: float | None = None
     doppler_hz: float | None = None
     tid: bytes | None = None
+    #: Business category assigned by a :class:`~llrpkit.policy.ReaderPolicy`
+    #: when one is applied to the stream; ``None`` otherwise.
+    category: str | None = field(default=None, compare=False)
+    item_label: str | None = field(default=None, compare=False)
     raw: params.TagReportData | None = field(default=None, compare=False, repr=False)
 
     @property

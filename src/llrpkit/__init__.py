@@ -12,6 +12,7 @@ around.
 """
 
 from llrpkit.__about__ import __version__
+from llrpkit.capture import TagWriter
 from llrpkit.client import LLRPClient
 from llrpkit.constants import (
     IMPINJ_PEN,
@@ -33,6 +34,7 @@ from llrpkit.exceptions import (
 from llrpkit.health import HealthAlert, HealthMonitor
 from llrpkit.inventory import TagReport
 from llrpkit.modes import AnnotatedMode, ModeGuidance, annotate_modes, suggest_mode
+from llrpkit.policy import AntennaPolicy, CatalogEntry, ItemCatalog, ReaderPolicy
 from llrpkit.presence import PresenceEvent, PresenceTracker, ticked_stream
 from llrpkit.profiles import InventoryProfile
 from llrpkit.reader import (
@@ -51,12 +53,15 @@ __all__ = [
     "MESSAGE_HEADER_LEN",
     "AccessResult",
     "AnnotatedMode",
+    "AntennaPolicy",
     "CapabilityError",
+    "CatalogEntry",
     "DecodedEPC",
     "GPIOState",
     "HealthAlert",
     "HealthMonitor",
     "InventoryProfile",
+    "ItemCatalog",
     "LLRPClient",
     "LLRPConnectionError",
     "LLRPError",
@@ -71,6 +76,7 @@ __all__ = [
     "RFMode",
     "Reader",
     "ReaderCapabilities",
+    "ReaderPolicy",
     "SweepPoint",
     "TagReport",
     "TagWriter",

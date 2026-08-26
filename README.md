@@ -29,7 +29,10 @@ llrpkit exists to close all of that at once:
 | **Dashboard** | FastAPI + WebSockets: multi-reader management, live tag streams, antenna health cards, an interactive reader-mode tuning workbench | Phase 4 |
 | **Field guide** | Plain-English docs for the folklore: sessions and targets, reader modes, dense-reader environments, antenna health methodology | Phase 5 |
 
-Beyond the core: **tag select filters** (reader-side EPC prefix include/exclude),
+Beyond the core: **host-side ignore policies** (keep only the tags each antenna
+should see, by item category — ignored tags never reach MQTT, a webhook, or your
+ERP; editable live from the dashboard **Control tab**), **tag select filters**
+(reader-side EPC prefix include/exclude),
 **Gen2 tag memory access** (read/write/EPC-rewrite/kill with password support),
 **GPIO** (outputs, GPI events), **GS1 EPC decoding** (SGTIN/SSCC/SGLN/GRAI/GIAI/GID-96
 to GTINs and pure-identity URIs), **presence events** (arrive/depart with dwell —

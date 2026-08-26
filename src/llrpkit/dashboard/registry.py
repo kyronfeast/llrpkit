@@ -23,9 +23,11 @@ import time
 from collections import deque
 from typing import Any
 
+from llrpkit.epc import decode_epc
 from llrpkit.exceptions import LLRPError
 from llrpkit.health import HealthMonitor
 from llrpkit.inventory import TagReport
+from llrpkit.policy import ReaderPolicy
 from llrpkit.reader import Reader
 
 log = logging.getLogger(__name__)
@@ -92,6 +94,8 @@ class ManagedReader:
         self.unique_epcs: set[bytes] = set()
         self.recent: deque[dict[str, Any]] = deque(maxlen=200)
         self._read_times: deque[float] = deque(maxlen=4096)
+        #: Optional host-side ignore policy applied to the inventory stream.
+        self.policy: ReaderPolicy | None = None
         self._inventory_task: asyncio.Task[None] | None = None
         self._events_task: asyncio.Task[None] | None = None
         self._health_task: asyncio.Task[None] | None = None
@@ -155,7 +159,7 @@ class ManagedReader:
                 batch = []
             last_flush = time.monotonic()
 
-        stream = self.reader.inventory(**settings)
+        stream = self.reader.inventory(policy=self.policy, **settings)
         try:
             async with contextlib.aclosing(stream):
                 async for tag in stream:
@@ -191,6 +195,14 @@ class ManagedReader:
                     {"type": "health", "reader": self.id, "antennas": self.snapshot_health()}
                 )
                 self.hub.publish({"type": "stats", "reader": self.id, **self.stats()})
+                if self.policy is not None:
+                    self.hub.publish(
+                        {
+                            "type": "policy",
+                            "reader": self.id,
+                            "counters": self.policy.counters(),
+                        }
+                    )
 
     # -- bookkeeping ---------------------------------------------------------
 
@@ -201,6 +213,7 @@ class ManagedReader:
             self.unique_epcs.add(tag.epc)
 
     def _tag_row(self, tag: TagReport) -> dict[str, Any]:
+        decoded = decode_epc(tag.epc)
         row = {
             "epc": tag.epc_hex,
             "antenna": tag.antenna,
@@ -208,6 +221,8 @@ class ManagedReader:
             "phase": round(tag.phase_deg, 1) if tag.phase_deg is not None else None,
             "channel": tag.channel_index,
             "tid": tag.tid.hex() if tag.tid is not None else None,
+            "category": tag.category,
+            "gs1": (decoded.gs1 or decoded.pure_identity_uri) if decoded is not None else None,
             "at": time.time(),
         }
         self.recent.append(row)
@@ -238,6 +253,22 @@ class ManagedReader:
 
     def snapshot_health(self) -> dict[str, dict[str, object]]:
         return {str(k): v for k, v in self.monitor.snapshot().items()}
+
+    # -- policy ------------------------------------------------------------
+
+    async def set_policy(self, data: dict[str, Any] | None) -> None:
+        """Apply (or clear, with ``None``) the ignore policy and restart the
+        inventory so it takes effect immediately if a stream is running."""
+        self.policy = ReaderPolicy.from_dict(data) if data else None
+        if self.inventory_running:
+            await self.start_inventory()  # re-attaches with the new policy
+
+    def policy_state(self) -> dict[str, Any]:
+        """The current policy document plus live drop counters (for the UI)."""
+        return {
+            "policy": self.policy.to_dict() if self.policy is not None else None,
+            "counters": self.policy.counters() if self.policy is not None else None,
+        }
 
     def info(self) -> dict[str, Any]:
         out: dict[str, Any] = {

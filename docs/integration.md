@@ -19,6 +19,41 @@ $ pip install "llrpkit-0.1.0-py3-none-any.whl[webhook]"    # direct-POST deploym
 Pin the version in your deployment docs. When llrpkit reaches PyPI the same
 extras apply to `pip install "llrpkit[mqtt]"`.
 
+## Ignore policies keep the stream light
+
+Since v0.2.0 a reader can carry an **ignore policy** — a host-side rule set
+that decides which tags each antenna is allowed to see, by item category.
+Ignored tags are dropped in llrpkit, next to the readers, **before** they
+reach any sink, so a downstream server (an ERP on modest hardware) only
+receives the tags it should act on. This is the recommended way to keep
+Odoo light: filter at the edge, not in the database.
+
+The policy is a JSON document (`llrpkit inventory --policy FILE`, or the
+dashboard Control tab). Its shape:
+
+```json
+{
+  "ignore_unknown": false,
+  "min_rssi_dbm": null,
+  "catalog": [
+    { "match": "epc_prefix", "value": "e200aa", "category": "pails" },
+    { "match": "gtin", "value": "80614141123458", "category": "ingredients" }
+  ],
+  "antennas": {
+    "4": { "mode": "allow", "categories": ["pails"] },
+    "1": { "mode": "deny", "categories": ["pickles-fresh"] }
+  }
+}
+```
+
+The catalog classifies a tag (match by `epc` exact, `gtin`, `company_prefix`
+— both from the GS1 decode — or `epc_prefix`); each antenna `allow`s only
+its categories or `deny`s a few; unlisted antennas pass everything. Drops
+are counted by antenna, category, and reason and surfaced live in the
+dashboard, so nothing is filtered silently. The payload schemas below are
+unchanged — a policy only changes *which* tags produce payloads, never
+their shape.
+
 ## Choosing a transport
 
 **MQTT** (`llrpkit inventory --mqtt-broker ...`) is right when more than one

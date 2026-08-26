@@ -58,6 +58,41 @@ class ProfileBody(SettingsBody):
     description: str = ""
 
 
+class GPOBody(BaseModel):
+    port: int = Field(ge=1)
+    state: bool
+
+
+class GPIConfigBody(BaseModel):
+    port: int = Field(ge=1)
+    enabled: bool
+
+
+class TagReadBody(BaseModel):
+    bank: str = Field(default="user", pattern=r"^(reserved|epc|tid|user)$")
+    word_pointer: int = Field(default=0, ge=0)
+    words: int = Field(default=0, ge=0)
+    target_epc: str | None = Field(default=None, pattern=r"^([0-9a-fA-F]{2})+$")
+    password: int = 0
+
+
+class TagWriteBody(TagReadBody):
+    data: str = Field(pattern=r"^([0-9a-fA-F]{4})+$")  # whole 16-bit words
+
+
+class TagWriteEpcBody(BaseModel):
+    new_epc: str = Field(pattern=r"^([0-9a-fA-F]{4})+$")
+    target_epc: str | None = Field(default=None, pattern=r"^([0-9a-fA-F]{2})+$")
+    password: int = 0
+
+
+class SweepBody(BaseModel):
+    powers_dbm: list[float] = Field(default_factory=list)
+    mode_indexes: list[int] = Field(default_factory=list)
+    seconds: float = Field(default=3.0, gt=0, le=30)
+    session: int = Field(default=1, ge=0, le=3)
+
+
 def create_app(
     registry: ReaderRegistry | None = None,
     *,
@@ -216,6 +251,152 @@ def create_app(
         profiles_path.mkdir(parents=True, exist_ok=True)
         target = profile.save(profiles_path / f"{safe}.json")
         return {"saved": str(target.name)}
+
+    # -- policy (ignore rules) ---------------------------------------------
+
+    @app.get("/api/readers/{reader_id}/policy")
+    async def get_policy(reader_id: str) -> dict[str, Any]:
+        return managed(reader_id).policy_state()
+
+    @app.put("/api/readers/{reader_id}/policy")
+    async def put_policy(reader_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        m = managed(reader_id)
+        try:
+            await m.set_policy(body or None)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(422, f"invalid policy: {exc}") from exc
+        reg.publish_roster()
+        return m.policy_state()
+
+    @app.delete("/api/readers/{reader_id}/policy")
+    async def clear_policy(reader_id: str) -> dict[str, Any]:
+        m = managed(reader_id)
+        await m.set_policy(None)
+        reg.publish_roster()
+        return m.policy_state()
+
+    # -- GPIO --------------------------------------------------------------
+
+    @app.get("/api/readers/{reader_id}/gpio")
+    async def get_gpio(reader_id: str) -> dict[str, Any]:
+        m = managed(reader_id)
+        try:
+            state = await m.reader.get_gpio()
+        except LLRPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {"gpis": state.gpis, "gpos": state.gpos}
+
+    @app.post("/api/readers/{reader_id}/gpio/output")
+    async def set_gpo(reader_id: str, body: GPOBody) -> dict[str, Any]:
+        m = managed(reader_id)
+        try:
+            await m.reader.set_gpo(body.port, body.state)
+            state = await m.reader.get_gpio()
+        except LLRPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {"gpis": state.gpis, "gpos": state.gpos}
+
+    @app.post("/api/readers/{reader_id}/gpio/input")
+    async def set_gpi(reader_id: str, body: GPIConfigBody) -> dict[str, Any]:
+        m = managed(reader_id)
+        try:
+            await m.reader.set_gpi_enabled(body.port, body.enabled)
+            state = await m.reader.get_gpio()
+        except LLRPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {"gpis": state.gpis, "gpos": state.gpos}
+
+    # -- tag operations ----------------------------------------------------
+
+    def _require_idle(m: ManagedReader) -> None:
+        if m.inventory_running:
+            raise HTTPException(409, "stop the inventory before running tag operations")
+
+    def _access_result(result: Any) -> dict[str, Any]:
+        return {
+            "ok": result.ok,
+            "status": result.status,
+            "epc": result.epc_hex,
+            "data": result.data.hex() if result.data is not None else None,
+            "words_written": result.words_written,
+        }
+
+    @app.post("/api/readers/{reader_id}/tag/read")
+    async def tag_read(reader_id: str, body: TagReadBody) -> dict[str, Any]:
+        m = managed(reader_id)
+        _require_idle(m)
+        try:
+            result = await m.reader.read_memory(
+                bank=body.bank,
+                word_pointer=body.word_pointer,
+                word_count=body.words,
+                target_epc=body.target_epc,
+                access_password=body.password,
+            )
+        except LLRPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return _access_result(result)
+
+    @app.post("/api/readers/{reader_id}/tag/write")
+    async def tag_write(reader_id: str, body: TagWriteBody) -> dict[str, Any]:
+        m = managed(reader_id)
+        _require_idle(m)
+        try:
+            result = await m.reader.write_memory(
+                bank=body.bank,
+                word_pointer=body.word_pointer,
+                data=body.data,
+                target_epc=body.target_epc,
+                access_password=body.password,
+            )
+        except LLRPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return _access_result(result)
+
+    @app.post("/api/readers/{reader_id}/tag/write-epc")
+    async def tag_write_epc(reader_id: str, body: TagWriteEpcBody) -> dict[str, Any]:
+        m = managed(reader_id)
+        _require_idle(m)
+        try:
+            result = await m.reader.write_epc(
+                body.new_epc, target_epc=body.target_epc, access_password=body.password
+            )
+        except LLRPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return _access_result(result)
+
+    # -- sweep -------------------------------------------------------------
+
+    @app.post("/api/readers/{reader_id}/sweep")
+    async def run_sweep(reader_id: str, body: SweepBody) -> dict[str, Any]:
+        from llrpkit.survey import sweep as do_sweep
+
+        m = managed(reader_id)
+        _require_idle(m)
+        if not body.powers_dbm and not body.mode_indexes:
+            raise HTTPException(422, "give at least one of powers_dbm or mode_indexes")
+        try:
+            points = await do_sweep(
+                m.reader,
+                powers_dbm=list(body.powers_dbm) or None,
+                mode_indexes=list(body.mode_indexes) or None,
+                seconds=body.seconds,
+                session=body.session,
+            )
+        except LLRPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {
+            "points": [
+                {
+                    "tx_power_dbm": p.tx_power_dbm,
+                    "mode_index": p.mode_index,
+                    "reads_per_sec": round(p.reads_per_sec, 1),
+                    "unique": p.unique,
+                    "reads": p.reads,
+                }
+                for p in points
+            ]
+        }
 
     # -- websocket ---------------------------------------------------------
 

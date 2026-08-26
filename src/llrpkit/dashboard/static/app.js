@@ -117,6 +117,9 @@ function handleEvent(msg) {
       renderAlertLog();
       if (msg.reader === state.current) renderAntennaCards();
       break;
+    case "policy":
+      if (msg.reader === state.current) renderDropCounters(msg.counters);
+      break;
   }
 }
 
@@ -153,6 +156,7 @@ $("#reader-picker").addEventListener("change", (e) => {
   renderAll();
   populateTuningForm();
   loadModes();
+  if ($("#panel-control").classList.contains("active")) loadControl();
 });
 
 async function renderReaderCards() {
@@ -231,8 +235,8 @@ function renderTagTable() {
         <td class="epc">${esc(t.epc)}</td>
         <td class="num">${t.antenna ?? "–"}</td>
         <td class="num">${fmt.rssi(t.rssi)}</td>
-        <td class="num">${t.phase != null ? t.phase.toFixed(1) + "°" : "–"}</td>
-        <td class="num">${t.channel ?? "–"}</td>
+        <td>${t.category ? `<span class="cat-chip">${esc(t.category)}</span>` : "–"}</td>
+        <td class="gs1">${t.gs1 ? esc(t.gs1) : "–"}</td>
         <td class="num">${fmt.time(t.at)}</td>
       </tr>`
     )
@@ -547,8 +551,236 @@ $$(".tab").forEach((tab) =>
   tab.addEventListener("click", () => {
     $$(".tab").forEach((t) => t.classList.toggle("active", t === tab));
     $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${tab.dataset.panel}`));
+    if (tab.dataset.panel === "control") loadControl();
   })
 );
+
+/* ------------------------- control panel ------------------------------- */
+
+const controlState = { antennas: {}, minRssi: null, ignoreUnknown: false, enabled: true };
+
+async function loadControl() {
+  if (!state.current) return;
+  await Promise.all([loadPolicy(), loadGpio()]);
+}
+
+async function loadPolicy() {
+  try {
+    const res = await api(`/api/readers/${state.current}/policy`);
+    const p = res.policy || { antennas: {}, catalog: [], enabled: true, ignore_unknown: false, min_rssi_dbm: null };
+    controlState.antennas = p.antennas || {};
+    controlState.minRssi = p.min_rssi_dbm ?? null;
+    controlState.ignoreUnknown = !!p.ignore_unknown;
+    controlState.enabled = p.enabled !== false;
+    $("#policy-enabled").checked = controlState.enabled;
+    $("#policy-ignore-unknown").checked = controlState.ignoreUnknown;
+    $("#policy-min-rssi").value = controlState.minRssi ?? "";
+    $("#catalog-json").value = JSON.stringify(p.catalog || [], null, 2);
+    renderAntennaRules();
+    renderDropCounters(res.counters);
+  } catch (err) { policyMsg(err.message, true); }
+}
+
+function renderAntennaRules() {
+  const host = $("#antenna-rules");
+  const ports = Object.keys(controlState.antennas).sort((a, b) => a - b);
+  if (!ports.length) { host.innerHTML = '<p class="empty-note">no antenna rules — all antennas pass everything</p>'; return; }
+  host.innerHTML = ports.map((port) => {
+    const r = controlState.antennas[port];
+    const cats = (r.categories || []).map(esc).join(", ") || "<em>none</em>";
+    return `<div class="rule-row">
+      <span class="rule-ant">ant ${esc(port)}</span>
+      <span class="rule-mode rule-${esc(r.mode)}">${esc(r.mode)}</span>
+      <span class="rule-cats">${cats}</span>
+      <button class="rule-del" data-port="${esc(port)}" title="remove">✕</button>
+    </div>`;
+  }).join("");
+  $$("#antenna-rules .rule-del").forEach((b) =>
+    b.addEventListener("click", () => { delete controlState.antennas[b.dataset.port]; renderAntennaRules(); })
+  );
+}
+
+$("#antenna-rule-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const port = String(parseInt($("#rule-ant").value, 10));
+  if (!port || port === "NaN") return;
+  const cats = $("#rule-cats").value.split(",").map((c) => c.trim()).filter(Boolean);
+  controlState.antennas[port] = { mode: $("#rule-mode").value, categories: cats };
+  $("#rule-cats").value = "";
+  renderAntennaRules();
+});
+
+function buildPolicyDoc() {
+  let catalog;
+  try { catalog = JSON.parse($("#catalog-json").value || "[]"); }
+  catch { throw new Error("catalog is not valid JSON"); }
+  if (!Array.isArray(catalog)) throw new Error("catalog must be a JSON array");
+  const minRssi = $("#policy-min-rssi").value.trim();
+  return {
+    enabled: $("#policy-enabled").checked,
+    ignore_unknown: $("#policy-ignore-unknown").checked,
+    min_rssi_dbm: minRssi === "" ? null : Number(minRssi),
+    catalog,
+    antennas: controlState.antennas,
+  };
+}
+
+function policyMsg(text, isError) {
+  const el = $("#policy-msg");
+  el.textContent = text;
+  el.classList.toggle("ok-msg", !isError);
+}
+
+$("#policy-apply").addEventListener("click", async () => {
+  try {
+    const doc = buildPolicyDoc();
+    const res = await api(`/api/readers/${state.current}/policy`, { method: "PUT", body: doc });
+    renderDropCounters(res.counters);
+    policyMsg("policy applied — filtering live", false);
+  } catch (err) { policyMsg(err.message, true); }
+});
+
+$("#policy-clear").addEventListener("click", async () => {
+  try {
+    await api(`/api/readers/${state.current}/policy`, { method: "DELETE" });
+    controlState.antennas = {};
+    $("#catalog-json").value = "[]";
+    $("#policy-min-rssi").value = "";
+    $("#policy-ignore-unknown").checked = false;
+    renderAntennaRules();
+    renderDropCounters(null);
+    policyMsg("policy cleared", false);
+  } catch (err) { policyMsg(err.message, true); }
+});
+
+$("#policy-example").addEventListener("click", () => {
+  controlState.antennas = {
+    "4": { mode: "allow", categories: ["pails"] },
+    "1": { mode: "deny", categories: ["pickles-fresh"] },
+  };
+  $("#catalog-json").value = JSON.stringify([
+    { match: "epc_prefix", value: "e200aa", category: "pails" },
+    { match: "epc_prefix", value: "e200bb", category: "pickles-fresh" },
+    { match: "epc_prefix", value: "e200cc", category: "ingredients" },
+  ], null, 2);
+  renderAntennaRules();
+  policyMsg("example loaded — press Apply to enforce", false);
+});
+
+function renderDropCounters(counters) {
+  const body = $("#drop-rows");
+  $("#drop-kept").textContent = counters ? fmt.num(counters.kept) : "0";
+  $("#drop-total").textContent = counters ? fmt.num(counters.dropped) : "0";
+  const cats = counters ? Object.entries(counters.by_category) : [];
+  if (!cats.length) { body.innerHTML = '<tr><td colspan="2" class="empty-note">no drops yet</td></tr>'; return; }
+  body.innerHTML = cats.sort((a, b) => b[1] - a[1])
+    .map(([cat, n]) => `<tr><td>${esc(cat)}</td><td class="num">${fmt.num(n)}</td></tr>`).join("");
+}
+
+/* ---- tag operations ---- */
+
+const OP_FIELDS = {
+  read: ["op-bankwrap", "op-ptrwrap", "op-wordswrap"],
+  write: ["op-bankwrap", "op-ptrwrap", "op-datawrap"],
+  "write-epc": ["op-newepcwrap"],
+};
+function syncOpFields() {
+  const shown = new Set(OP_FIELDS[$("#op-kind").value] || []);
+  for (const cls of ["op-bankwrap", "op-ptrwrap", "op-wordswrap", "op-datawrap", "op-newepcwrap"]) {
+    const el = document.querySelector(`.${cls}`);
+    if (el) el.style.display = shown.has(cls) ? "" : "none";
+  }
+}
+$("#op-kind").addEventListener("change", syncOpFields);
+
+$("#tagop-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const kind = $("#op-kind").value;
+  const target = $("#op-target").value.trim() || null;
+  const pass = parseInt($("#op-pass").value, 10) || 0;
+  const out = $("#op-result");
+  out.hidden = false;
+  out.textContent = "running…";
+  try {
+    let path, body;
+    if (kind === "read") {
+      path = "tag/read";
+      body = { bank: $("#op-bank").value, word_pointer: +$("#op-ptr").value, words: +$("#op-words").value, target_epc: target, password: pass };
+    } else if (kind === "write") {
+      path = "tag/write";
+      body = { bank: $("#op-bank").value, word_pointer: +$("#op-ptr").value, data: $("#op-data").value.trim(), target_epc: target, password: pass };
+    } else {
+      path = "tag/write-epc";
+      body = { new_epc: $("#op-newepc").value.trim(), target_epc: target, password: pass };
+    }
+    const res = await api(`/api/readers/${state.current}/${path}`, { method: "POST", body });
+    out.textContent = res.ok
+      ? `OK  tag ${res.epc}` + (res.data != null ? `  data ${res.data}` : "") + (res.words_written != null ? `  ${res.words_written} word(s) written` : "")
+      : `FAILED (${res.status})  tag ${res.epc}`;
+    out.className = "op-result " + (res.ok ? "op-ok" : "op-fail");
+  } catch (err) {
+    out.textContent = "error: " + err.message;
+    out.className = "op-result op-fail";
+  }
+});
+
+/* ---- GPIO ---- */
+
+async function loadGpio() {
+  const host = $("#gpio-panel");
+  try {
+    const s = await api(`/api/readers/${state.current}/gpio`);
+    renderGpio(s);
+  } catch (err) { host.innerHTML = `<p class="empty-note">GPIO unavailable: ${esc(err.message)}</p>`; }
+}
+function renderGpio(s) {
+  const host = $("#gpio-panel");
+  const gpos = Object.entries(s.gpos).sort((a, b) => a[0] - b[0]).map(([port, on]) =>
+    `<div class="gpio-item"><span>GPO ${esc(port)}</span>
+      <button class="btn gpio-toggle ${on ? "gpio-on" : ""}" data-port="${esc(port)}" data-next="${on ? "0" : "1"}">${on ? "on" : "off"}</button></div>`).join("");
+  const gpis = Object.entries(s.gpis).sort((a, b) => a[0] - b[0]).map(([port, val]) =>
+    `<div class="gpio-item"><span>GPI ${esc(port)}</span><span class="gpi-state gpi-${esc(val)}">${esc(val)}</span></div>`).join("");
+  host.innerHTML = `<div class="gpio-group"><h4>Outputs</h4>${gpos}</div><div class="gpio-group"><h4>Inputs</h4>${gpis}</div>`;
+  $$("#gpio-panel .gpio-toggle").forEach((b) =>
+    b.addEventListener("click", async () => {
+      try {
+        const s2 = await api(`/api/readers/${state.current}/gpio/output`, { method: "POST", body: { port: +b.dataset.port, state: b.dataset.next === "1" } });
+        renderGpio(s2);
+      } catch (err) { toast({ kind: "exception", message: err.message }); }
+    })
+  );
+}
+$("#gpio-refresh").addEventListener("click", loadGpio);
+
+/* ---- sweep ---- */
+
+$("#sweep-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const parseList = (s, f) => s.split(",").map((x) => x.trim()).filter(Boolean).map(f);
+  const powers = parseList($("#sweep-powers").value, Number).filter((n) => !isNaN(n));
+  const modes = parseList($("#sweep-modes").value, (x) => parseInt(x, 10)).filter((n) => !isNaN(n));
+  const msg = $("#sweep-msg");
+  if (!powers.length && !modes.length) { msg.textContent = "give powers and/or modes"; return; }
+  msg.textContent = "sweeping…";
+  try {
+    const res = await api(`/api/readers/${state.current}/sweep`, {
+      method: "POST",
+      body: { powers_dbm: powers, mode_indexes: modes, seconds: +$("#sweep-secs").value },
+    });
+    const best = res.points.reduce((a, b) => (b.unique > a.unique ? b : a), res.points[0]);
+    $("#sweep-table").hidden = false;
+    $("#sweep-rows").innerHTML = res.points.map((p) => {
+      const isBest = p === best;
+      return `<tr class="${isBest ? "sweep-best" : ""}">
+        <td>${p.tx_power_dbm != null ? p.tx_power_dbm.toFixed(0) + " dBm" : "–"}</td>
+        <td>${p.mode_index ?? "–"}</td>
+        <td class="num">${p.reads_per_sec.toFixed(1)}</td>
+        <td class="num">${p.unique}${isBest ? " ★" : ""}</td></tr>`;
+    }).join("");
+    msg.textContent = "";
+  } catch (err) { msg.textContent = err.message; }
+});
+syncOpFields();
 
 function renderAll() {
   renderTiles();

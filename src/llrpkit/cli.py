@@ -240,6 +240,8 @@ async def _run_inventory(
                     extra += f"  phase {tag.phase_deg:6.1f}°"
                 if tag.tid is not None:
                     extra += f"  tid {tag.tid.hex()}"
+                if tag.category is not None:
+                    extra += f"  [{tag.category}]"
                 if show_decode:
                     decoded = decode_epc(tag.epc)
                     if decoded is not None:
@@ -253,7 +255,19 @@ async def _run_inventory(
         typer.echo(f"{seen} tag report(s) captured to {writer.path}")
     else:
         typer.echo(f"{seen} tag report(s)")
+    _echo_policy_drops(inventory_kwargs.get("policy"))
     return seen
+
+
+def _echo_policy_drops(policy: Any) -> None:
+    """Print a compact drop summary when a policy filtered the stream."""
+    if policy is None:
+        return
+    snap = policy.counters()
+    if not snap["dropped"]:
+        return
+    by_cat = ", ".join(f"{cat} {n}" for cat, n in sorted(snap["by_category"].items()))
+    typer.echo(f"policy ignored {snap['dropped']} tag(s): {by_cat}")
 
 
 @app.command()
@@ -340,6 +354,13 @@ def inventory(
         str | None,
         typer.Option(help="Start from a saved settings profile (see 'llrpkit profile')."),
     ] = None,
+    policy: Annotated[
+        str | None,
+        typer.Option(
+            help="Apply a reader policy (JSON) that ignores tags host-side by "
+            "antenna and item category — ignored tags never reach the sink."
+        ),
+    ] = None,
 ) -> None:
     """Stream a live tag inventory to the terminal, an MQTT broker, or a file."""
     if search_mode is not None and search_mode.lower() not in SEARCH_MODES:
@@ -393,6 +414,19 @@ def inventory(
     for key, value in profile_kwargs.items():
         if key in inventory_kwargs and inventory_kwargs.get(key) == defaults.get(key):
             inventory_kwargs[key] = list(value) if isinstance(value, tuple) else value
+    if policy is not None:
+        from pathlib import Path
+
+        from llrpkit.policy import ReaderPolicy
+
+        policy_path = Path(policy)
+        if not policy_path.is_file():
+            raise typer.BadParameter(f"no policy file at {policy}")
+        try:
+            inventory_kwargs["policy"] = ReaderPolicy.load(policy_path)
+        except (ValueError, KeyError) as exc:
+            raise typer.BadParameter(f"policy file {policy} is invalid: {exc}") from exc
+        typer.echo(f"(policy: {policy_path})")
     if mqtt_broker is not None and webhook is not None:
         raise typer.BadParameter("choose one sink: --mqtt-broker or --webhook, not both")
     if webhook is not None:

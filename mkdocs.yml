@@ -42,6 +42,7 @@ nav:
       - TagFocus & TID: field-guide/tagfocus-and-tid.md
       - Antenna health: field-guide/antenna-health.md
       - R700 onboarding: field-guide/r700-onboarding.md
+  - Reader policies: policies.md
   - API tour: api.md
   - Integrating downstream: integration.md
   - How llrpkit compares: comparison.md

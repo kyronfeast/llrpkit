@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "ignore_unknown": false,
+  "min_rssi_dbm": null,
+
+  "_comment": "Reader policy: what each antenna is allowed to see. Enforced host-side by llrpkit, so ignored tags never reach MQTT, a webhook, or your ERP. Replace the catalog with your real product export (match by 'gtin' for GS1 tags, or 'epc_prefix' for raw tags).",
+
+  "catalog": [
+    { "match": "epc_prefix", "value": "e200aa", "category": "pails" },
+    { "match": "epc_prefix", "value": "e200bb", "category": "pickles-fresh" },
+    { "match": "epc_prefix", "value": "e200cc", "category": "ingredients" },
+    { "match": "gtin", "value": "80614141123458", "category": "ingredients", "label": "Kosher Salt 25lb" }
+  ],
+
+  "antennas": {
+    "4": { "mode": "allow", "categories": ["pails"], "min_rssi_dbm": -62 },
+    "1": { "mode": "deny", "categories": ["pickles-fresh"] }
+  }
+}

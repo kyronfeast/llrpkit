@@ -18,11 +18,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from llrpkit.modes import AnnotatedMode
+    from llrpkit.policy import ReaderPolicy
 
 from llrpkit.client import LLRPClient, check_status
 from llrpkit.constants import IMPINJ_PEN, LLRP_PORT
@@ -585,11 +586,17 @@ class Reader:
         duration: float | None = None,
         max_tags: int | None = None,
         ro_spec_id: int = DEFAULT_ROSPEC_ID,
+        policy: ReaderPolicy | None = None,
     ) -> AsyncGenerator[TagReport, None]:
         """Stream tag observations until ``duration``/``max_tags`` or ``break``.
 
         ``epc_filter`` selects tags by EPC prefix on the reader itself
         (``filter_action="exclude"`` inverts it) — see ``build_rospec``.
+        ``policy`` (a :class:`~llrpkit.policy.ReaderPolicy`) filters tags
+        host-side: ignored tags are dropped before they are yielded, so every
+        downstream consumer (dashboard, MQTT, webhook, capture) sees only
+        survivors; kept tags carry their assigned ``category``, and the
+        policy's drop counters record what was filtered.
         One inventory stream per reader at a time. The underlying ROSpec is
         created on entry and stopped and deleted on exit, however the stream
         ends. Impinj report content (sub-dBm RSSI, plus phase / Doppler /
@@ -650,7 +657,17 @@ class Reader:
                         raise LLRPConnectionError("connection lost during inventory") from None
                     continue
                 for trd in report.tag_report_datas:
-                    yield TagReport.from_param(trd)
+                    report_tag = TagReport.from_param(trd)
+                    if policy is not None:
+                        decision = policy.evaluate(report_tag)
+                        if not decision.keep:
+                            continue  # ignored: never leaves the stream
+                        report_tag = replace(
+                            report_tag,
+                            category=decision.category,
+                            item_label=decision.item_label or None,
+                        )
+                    yield report_tag
                     yielded += 1
                     if max_tags is not None and yielded >= max_tags:
                         return

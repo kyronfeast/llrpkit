@@ -24,6 +24,7 @@
   <button class="tab active" data-panel="live" role="tab">Live tags</button>
   <button class="tab" data-panel="antennas" role="tab">Antennas</button>
   <button class="tab" data-panel="tuning" role="tab">Tuning</button>
+  <button class="tab" data-panel="control" role="tab">Control</button>
   <button class="tab" data-panel="readers" role="tab">Readers</button>
 </nav>
 
@@ -48,7 +49,7 @@
         <select id="antenna-filter" class="control" aria-label="Filter by antenna"><option value="">all antennas</option></select>
       </div>
       <table class="tag-table">
-        <thead><tr><th>EPC</th><th>Ant</th><th>RSSI (dBm)</th><th>Phase</th><th>Ch</th><th>Seen</th></tr></thead>
+        <thead><tr><th>EPC</th><th>Ant</th><th>RSSI (dBm)</th><th>Category</th><th>Identity (GS1)</th><th>Seen</th></tr></thead>
         <tbody id="tag-rows"></tbody>
       </table>
     </div>
@@ -122,6 +123,117 @@
         <figcaption class="chart-title">Live response <span class="chart-sub">reads/sec — change a setting, watch it move</span></figcaption>
         <div id="tuning-chart" class="chart" data-chart="line"></div>
       </figure>
+    </div>
+  </section>
+
+  <!-- ====================== CONTROL ===================== -->
+  <section id="panel-control" class="panel">
+    <p class="panel-intro">Complete control of the active reader. Rules here are enforced
+      <strong>host-side</strong> — ignored tags never reach MQTT, a webhook, or your ERP.</p>
+
+    <!-- Ignore policy -->
+    <div class="control-card">
+      <div class="control-head">
+        <h3>Ignore policy <span class="chart-sub">by antenna &amp; item category</span></h3>
+        <label class="switch"><input type="checkbox" id="policy-enabled"> <span>enabled</span></label>
+      </div>
+      <p class="hint">Each antenna <em>allows</em> only its categories (or <em>denies</em> a few).
+        A tag's category comes from the catalog (match by EPC prefix, GS1 GTIN, or company prefix).
+        Example: line&nbsp;4 → allow <code>pails</code> ignores everything else on antenna&nbsp;4.</p>
+
+      <div class="policy-grid">
+        <div class="policy-col">
+          <h4>Per-antenna rules</h4>
+          <div id="antenna-rules" class="rules"></div>
+          <form id="antenna-rule-form" class="rule-add">
+            <input id="rule-ant" class="control port" type="number" min="1" placeholder="ant" required>
+            <select id="rule-mode" class="control"><option value="allow">allow</option><option value="deny">deny</option></select>
+            <input id="rule-cats" class="control" placeholder="categories, comma-separated">
+            <button class="btn" type="submit">Add / update</button>
+          </form>
+          <div class="rule-global">
+            <label>Global min RSSI (dBm)
+              <input id="policy-min-rssi" class="control port" type="number" step="1" placeholder="none">
+            </label>
+            <label class="switch"><input type="checkbox" id="policy-ignore-unknown"> <span>ignore uncataloged tags</span></label>
+          </div>
+        </div>
+
+        <div class="policy-col">
+          <h4>Catalog <span class="chart-sub">EPC/GTIN → category</span></h4>
+          <textarea id="catalog-json" class="control mono" rows="8" spellcheck="false"
+            placeholder='[{"match":"epc_prefix","value":"e200aa","category":"pails"}]'></textarea>
+          <p class="hint">One JSON array of catalog rules — paste your product export here.</p>
+        </div>
+      </div>
+
+      <div class="control-actions">
+        <button id="policy-apply" class="btn btn-primary">Apply policy</button>
+        <button id="policy-clear" class="btn">Clear all</button>
+        <button id="policy-example" class="btn btn-ghost">Load example</button>
+        <span id="policy-msg" class="form-error" role="status"></span>
+      </div>
+
+      <div class="drop-card">
+        <div class="drop-head"><h4>Live filtering</h4>
+          <span class="drop-summary"><b id="drop-kept">0</b> kept · <b id="drop-total" class="drop-count">0</b> ignored</span></div>
+        <table class="mini-table"><thead><tr><th>Ignored by category</th><th>Count</th></tr></thead>
+          <tbody id="drop-rows"><tr><td colspan="2" class="empty-note">no drops yet</td></tr></tbody></table>
+      </div>
+    </div>
+
+    <!-- Tag operations -->
+    <div class="control-card">
+      <h3>Tag operations <span class="chart-sub">read / write memory, rewrite EPC</span></h3>
+      <p class="hint">Requires the inventory stopped (tag access owns the radio). Always target a
+        specific EPC when more than one tag is in the field.</p>
+      <form id="tagop-form" class="tagop-grid">
+        <label>Operation
+          <select id="op-kind" class="control">
+            <option value="read">Read memory</option>
+            <option value="write">Write memory</option>
+            <option value="write-epc">Rewrite EPC</option>
+          </select></label>
+        <label>Target EPC (hex)
+          <input id="op-target" class="control mono" placeholder="optional — first tag if blank"></label>
+        <label class="op-bankwrap">Bank
+          <select id="op-bank" class="control">
+            <option value="user">user</option><option value="epc">epc</option>
+            <option value="tid">tid</option><option value="reserved">reserved</option>
+          </select></label>
+        <label class="op-ptrwrap">Word ptr <input id="op-ptr" class="control port" type="number" value="0" min="0"></label>
+        <label class="op-wordswrap">Words <input id="op-words" class="control port" type="number" value="0" min="0"></label>
+        <label class="op-datawrap">Data (hex words) <input id="op-data" class="control mono" placeholder="cafe0042"></label>
+        <label class="op-newepcwrap">New EPC (hex) <input id="op-newepc" class="control mono" placeholder="3074..."></label>
+        <label>Password <input id="op-pass" class="control port" type="number" value="0" min="0"></label>
+        <button class="btn btn-primary" type="submit">Run</button>
+      </form>
+      <pre id="op-result" class="op-result" hidden></pre>
+    </div>
+
+    <!-- GPIO -->
+    <div class="control-card">
+      <h3>GPIO <span class="chart-sub">outputs &amp; inputs</span></h3>
+      <div id="gpio-panel" class="gpio-panel"><p class="empty-note">select a reader</p></div>
+      <button id="gpio-refresh" class="btn">Refresh</button>
+    </div>
+
+    <!-- Sweep -->
+    <div class="control-card">
+      <h3>Coverage sweep <span class="chart-sub">power / RF-mode survey</span></h3>
+      <p class="hint">Runs a short inventory per setting (inventory must be stopped). Unique count is
+        what matters — the setting that finds the weak tags wins.</p>
+      <form id="sweep-form" class="row-form">
+        <label>Powers (dBm) <input id="sweep-powers" class="control" placeholder="15,20,25,30"></label>
+        <label>Modes <input id="sweep-modes" class="control" placeholder="0,2,1002"></label>
+        <label>Sec each <input id="sweep-secs" class="control port" type="number" value="3" min="1" max="30"></label>
+        <button class="btn btn-primary" type="submit">Run sweep</button>
+        <span id="sweep-msg" class="form-error" role="status"></span>
+      </form>
+      <table class="mini-table" id="sweep-table" hidden>
+        <thead><tr><th>Power</th><th>Mode</th><th>Reads/s</th><th>Unique</th></tr></thead>
+        <tbody id="sweep-rows"></tbody>
+      </table>
     </div>
   </section>
 

@@ -6,6 +6,35 @@ All notable changes to llrpkit are documented in this file. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-25
+
+Complete reader control from the dashboard, and host-side ignore policies.
+
+### Added
+
+- **Reader ignore policy** (`llrpkit.policy`): keep only the tags a reader
+  should see, enforced **host-side** so ignored tags never reach MQTT, a
+  webhook, or an ERP. An `ItemCatalog` classifies each tag into a business
+  category (match by exact EPC, GS1 GTIN, GS1 company prefix, or EPC
+  prefix — the GS1 forms come from `decode_epc`, so a catalog is a product
+  export); an `AntennaPolicy` gives each port an allow/deny category set
+  with an optional RSSI floor; `ReaderPolicy.evaluate()` decides keep/ignore
+  and tallies every drop by antenna, category, and reason. JSON is the
+  config format (`examples/policy.example.json`).
+- `Reader.inventory(policy=...)` filters the stream before yielding, so the
+  dashboard, MQTT bridge, webhook sink, and capture all see only survivors,
+  and kept tags carry their `category`. CLI `llrpkit inventory --policy
+  FILE` (flows to every sink) with a per-run drop summary.
+- **Dashboard Control tab**: an in-browser policy editor (per-antenna
+  allow/deny rules, a catalog box, global floors, live drop counters that
+  update in real time), tag operations (read/write memory, rewrite EPC),
+  a GPIO panel (output toggles + live input states), and a coverage-sweep
+  workbench. New REST under `/api/readers/{id}/`: `policy` (GET/PUT/DELETE),
+  `gpio` (+ `/output`, `/input`), `tag/{read,write,write-epc}` (409 while an
+  inventory runs — tag access needs the reader idle), and `sweep`. The live
+  tag table gains Category and GS1 Identity columns.
+
+
 ## [0.1.0] - 2026-07-23
 
 The first release: the complete stack, built and verified entirely against the
