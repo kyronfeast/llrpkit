@@ -64,7 +64,12 @@ docs = [
   "mkdocs-material>=9.5",
 ]
 
-# [project.urls] intentionally omitted until the GitHub repo goes live (Phase 5).
+[project.urls]
+Homepage = "https://github.com/kyronfeast/llrpkit"
+Repository = "https://github.com/kyronfeast/llrpkit"
+Documentation = "https://kyronfeast.github.io/llrpkit/"
+Changelog = "https://github.com/kyronfeast/llrpkit/blob/main/CHANGELOG.md"
+Issues = "https://github.com/kyronfeast/llrpkit/issues"
 
 [project.scripts]
 llrpkit = "llrpkit.cli:app"
