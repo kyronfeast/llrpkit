@@ -2,13 +2,12 @@
 
 **A modern, typed, asyncio-native Python toolkit for LLRP RAIN RFID readers — built Impinj-first (R700 and Speedway), with a reader emulator, a web dashboard, and a written field guide.**
 
-> 🚧 **Pre-release.** llrpkit is being built in the open toward `v0.1.0`, and the whole
-> stack is now real: the full LLRP 1.0.1 wire protocol with Impinj Octane extensions
-> (golden-vector tested), the asyncio `Reader` with streaming inventory, curated
-> reader-mode guidance, antenna health monitoring with quiet-port alerts, a tuning-responsive
-> emulator, and the **web dashboard** — `llrpkit demo` gives you all of it against an
-> emulated reader in one command, no hardware required. Docs polish and the v0.1.0
-> release are what remain.
+> **On PyPI now — `pip install llrpkit`.** The whole stack is real: the full
+> LLRP 1.0.1 wire protocol with Impinj Octane extensions (golden-vector tested),
+> the asyncio `Reader` with streaming inventory, curated reader-mode guidance,
+> antenna health monitoring with quiet-port alerts, a tuning-responsive emulator,
+> host-side ignore policies, and the **web dashboard** — `llrpkit demo` gives you
+> all of it against an emulated reader in one command, no hardware required.
 
 ## Why
 
@@ -47,7 +46,7 @@ ItemTest, and the IoT Device Interface.
 ## Try it in sixty seconds (no reader required)
 
 ```console
-$ pip install -e ".[dashboard]"
+$ pip install "llrpkit[dashboard]"
 $ llrpkit demo
 llrpkit demo — emulated reader + live dashboard → http://127.0.0.1:8000
 ```
@@ -79,7 +78,7 @@ online/offline status with an MQTT Last Will, while the reader stays in LLRP
 mode with the full tuning control plane:
 
 ```console
-$ pip install -e ".[mqtt]"
+$ pip install "llrpkit[mqtt]"
 $ llrpkit inventory 127.0.0.1 --search-mode tagfocus --mqtt-broker 127.0.0.1
 $ mosquitto_sub -t 'llrpkit/#' -v      # in another terminal
 llrpkit/127.0.0.1/status {"status": "online", ...}
@@ -109,14 +108,15 @@ or an R700 in LLRP mode. The full dashboard demo (`llrpkit demo`) arrives with P
 
 ## Roadmap
 
-Phase 0 (this scaffold) → 1 wire protocol & codegen → 2 client & inventory → 3 tuning &
-antenna health → 4 dashboard → 5 docs, hardening, `v0.1.0` on PyPI. Details in
-[`CHANGELOG.md`](CHANGELOG.md) as phases land.
+All five build phases are shipped — wire protocol & codegen, client & inventory,
+tuning & antenna health, dashboard, and docs/hardening — and the current release
+(`v0.2.0`) adds host-side ignore policies and full dashboard control. Full history
+in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Development
 
 ```console
-$ git clone <repo-url> && cd llrpkit
+$ git clone https://github.com/kyronfeast/llrpkit && cd llrpkit
 $ pip install -e ".[dev,docs]"
 $ pre-commit install
 $ pytest          # tests + coverage

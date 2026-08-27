@@ -8,16 +8,16 @@ the wire and they can build without guessing.
 
 ## Installing llrpkit on the host
 
-llrpkit is not on PyPI yet. Until it is, install from the built wheel that
-ships in the release archive (or build one with `python -m build`):
+llrpkit is on PyPI — install it with the extra your deployment needs:
 
 ```console
-$ pip install "llrpkit-0.1.0-py3-none-any.whl[mqtt]"       # broker deployments
-$ pip install "llrpkit-0.1.0-py3-none-any.whl[webhook]"    # direct-POST deployments
+$ pip install "llrpkit[mqtt]"        # broker deployments
+$ pip install "llrpkit[webhook]"     # direct-POST deployments
 ```
 
-Pin the version in your deployment docs. When llrpkit reaches PyPI the same
-extras apply to `pip install "llrpkit[mqtt]"`.
+Pin a version in your deployment docs (`pip install "llrpkit[mqtt]==0.2.0"`).
+Prefer an offline install from the wheel attached to each GitHub Release? That
+still works: `pip install "llrpkit-0.2.0-py3-none-any.whl[mqtt]"`.
 
 ## Ignore policies keep the stream light
 
