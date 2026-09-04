@@ -43,6 +43,24 @@ async def test_connect_capabilities_and_extensions() -> None:
         assert caps.mode(1002).mode_id == 1002
 
 
+async def test_antenna_hub_expands_to_32_antennas() -> None:
+    # An R700 with R702 antenna hubs reports up to 32 antennas; llrpkit reads
+    # the count dynamically, so a hub-sized reader needs no special handling.
+    hub_tag = EmulatedTag(epc=bytes([0xE2, 0x00, 0x09] + [0] * 9), antennas=(9,))
+    async with (
+        make_emulator(tags=[hub_tag], antenna_count=32) as emu,
+        Reader("127.0.0.1", emu.port) as reader,
+    ):
+        assert reader.max_antennas == 32  # the whole point: not capped at 4
+        seen = []
+        stream = reader.inventory(antennas=(9,), duration=5.0, max_tags=3)
+        async with contextlib.aclosing(stream):
+            async for tag in stream:
+                seen.append(tag)
+        assert seen, "no tags read on hub-range antenna 9"
+        assert all(t.antenna == 9 for t in seen)
+
+
 async def test_power_and_mode_capability_errors() -> None:
     from llrpkit.exceptions import CapabilityError
 

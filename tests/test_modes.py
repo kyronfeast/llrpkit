@@ -51,6 +51,24 @@ def test_autoset_detection() -> None:
     assert annotated[2].is_autoset  # uncurated >= 1000 heuristic
 
 
+def test_r700_mode_number_scheme_is_decoded() -> None:
+    # three-digit static mode: first digit is region
+    assert "FCC" in generic_description(rf(120))
+    assert "ETSI low band" in generic_description(rf(246))
+    assert "ETSI high band" in generic_description(rf(322))
+    # Gen2 AutoSet family by region
+    assert "Gen2 AutoSet mode for ETSI low band" in generic_description(rf(1210))
+    # Gen2X static: mirrors a base mode, M800-only, and is NOT autoset
+    g4120 = generic_description(rf(4120))
+    assert "Gen2X static" in g4120
+    assert "mode 120" in g4120
+    assert "M800" in g4120
+    assert not annotate_modes([rf(4120)])[0].is_autoset
+    # Gen2X AutoSet is autoset
+    assert "Gen2X AutoSet" in generic_description(rf(5120))
+    assert annotate_modes([rf(5120)])[0].is_autoset
+
+
 def test_curated_table_is_consistent() -> None:
     for mode_id, guidance in CURATED_MODES.items():
         assert guidance.mode_id == mode_id

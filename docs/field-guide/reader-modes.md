@@ -52,6 +52,33 @@ its own RF environment and hops among underlying profiles. On modern readers
 they are the right default — you choose the *bias* (fast vs DRM) and let the
 firmware do the per-minute adaptation you were never going to do by hand.
 
+## The R700 mode numbers (and Gen2X)
+
+A Speedway shows you modes `0`–`5`. An R700 shows *dozens*, and the numbers
+encode what they are — llrpkit decodes this for you in `llrpkit modes`, but it
+helps to read them yourself:
+
+- **`0`–`5`** — the classic LLRP modes (Max Throughput → Dense Reader M8).
+- **Three-digit `RMM`** (e.g. `120`, `246`, `322`) — static modes. The **first
+  digit is the region** (`1` = FCC-like, `2` = ETSI low band / Japan, `3` = ETSI
+  high band); the second is the Miller value. So `120` and `246` are "the same"
+  mode expressed for two regions.
+- **`1002`–`1006`, `11xx` / `12xx` / `13xx`** — AutoSet modes (the reader cycles
+  among profiles); the second digit again picks the region.
+- **`4xxx`** — **Gen2X static** modes. Link parameters mirror mode `xxx`, but
+  they *only* inventory Gen2X-enabled tags.
+- **`5xxx`** — **Gen2X AutoSet** modes: cycle between Gen2X and Gen2v2 inventories.
+
+**Gen2X** (Impinj, firmware 8.4+) delivers more power to tags for extra range and
+lets the reader be pickier about which tags answer — but only **Impinj M800** tag
+chips support it. On a mixed population, a `5xxx` AutoSet mode captures the Gen2X
+benefit for M800 tags while still reading everything else; a bare `4xxx` static
+mode reads *only* the M800 tags, which is rarely what you want unless your
+population is entirely M800. If your tags aren't M800, ignore the 4xxx/5xxx rows
+and stay on the classic modes.
+
+*Source: Impinj R700 Series Reader Modes application note v2.1.*
+
 ## How to actually tune
 
 Change one thing, watch one number. The methodology llrpkit's tuning workbench

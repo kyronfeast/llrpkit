@@ -10,6 +10,22 @@ R420, and the emulator each get exactly their own truth, annotated.
 The curated guidance below is written from Impinj's published Octane LLRP
 documentation and field experience; identifiers not in the table still get a
 useful generic description derived from their modulation parameters.
+
+Modern R700 firmware exposes many more modes than the classic LLRP 0-5, using a
+documented numbering scheme that :func:`generic_description` decodes:
+
+* ``0``-``5`` — the classic LLRP modes (curated above).
+* ``1002``-``1006`` and ``11xx`` / ``12xx`` / ``13xx`` — AutoSet modes (the
+  reader cycles among profiles); the ``1_x_``/``12``/``13`` second digit selects
+  region (FCC / ETSI-low+Japan / ETSI-high).
+* three-digit ``RMM`` static modes (e.g. ``120``) — first digit is region
+  (1 = FCC-like, 2 = ETSI-low / Japan, 3 = ETSI-high), second is the Miller value.
+* ``4xxx`` — **Gen2X static** modes: link parameters mirror mode ``xxx`` but they
+  *only* inventory Gen2X-enabled tags (Impinj M800-series chips).
+* ``5xxx`` — **Gen2X AutoSet** modes: cycle between Gen2X and Gen2v2 inventories,
+  benefiting populations that include M800 tags (firmware 8.4+).
+
+Source: Impinj R700 Series *Reader Modes* application note v2.1 (Table 1).
 """
 
 from __future__ import annotations
@@ -177,17 +193,58 @@ class AnnotatedMode:
     def is_autoset(self) -> bool:
         if self.guidance is not None:
             return self.guidance.family == "autoset"
-        return self.rf.mode_id >= 1000
+        return is_autoset_mode_id(self.rf.mode_id)
+
+
+#: Region decoded from the leading digit of an R700 mode number.
+_R700_REGIONS = {1: "FCC / FCC-like", 2: "ETSI low band / Japan", 3: "ETSI high band"}
+
+
+def is_autoset_mode_id(mode_id: int) -> bool:
+    """True if a mode identifier is an AutoSet (reader-managed) mode.
+
+    Covers the LLRP AutoSet modes and the Gen2 AutoSet families (1000-1399) and
+    the Gen2X AutoSet modes (5xxx). Static modes — LLRP 0-5, the three-digit
+    static modes, and Gen2X *static* 4xxx — are not AutoSet.
+    """
+    return 1000 <= mode_id <= 1399 or 5000 <= mode_id <= 5999
+
+
+def r700_scheme_note(mode_id: int) -> str | None:
+    """R700 mode-number context for a mode we have no curated entry for.
+
+    Decodes Impinj's documented R700 numbering scheme (Reader Modes app note,
+    Table 1). Returns None for identifiers the scheme doesn't cover.
+    """
+    if 100 <= mode_id <= 399:
+        region = _R700_REGIONS.get(mode_id // 100)
+        return f"R700 static mode for {region}." if region else None
+    if 1100 <= mode_id <= 1399:
+        region = _R700_REGIONS.get((mode_id // 100) % 10)
+        return f"R700 Gen2 AutoSet mode for {region}." if region else "R700 Gen2 AutoSet mode."
+    if 4000 <= mode_id <= 4999:
+        return (
+            f"R700 Gen2X static mode: link parameters of mode {mode_id - 4000}, but "
+            "only inventories Gen2X-enabled tags (Impinj M800-series chips)."
+        )
+    if 5000 <= mode_id <= 5999:
+        return (
+            "R700 Gen2X AutoSet mode: cycles between Gen2X and Gen2v2 inventories; "
+            "benefits populations that include Impinj M800 tags (firmware 8.4+)."
+        )
+    return None
 
 
 def generic_description(rf: RFMode) -> str:
     """A serviceable description for a mode we have no curated entry for."""
     miller = "FM0" if rf.m_value == 0 else f"Miller-{2**rf.m_value}"
-    kind = "reader-managed (AutoSet-style)" if rf.mode_id >= 1000 else "fixed"
-    return (
+    kind = "reader-managed (AutoSet-style)" if is_autoset_mode_id(rf.mode_id) else "fixed"
+    base = (
         f"{kind} mode, {miller} backscatter at {rf.bdr_value} bps. Higher Miller "
         "numbers trade speed for sensitivity and interference tolerance."
     )
+    note = r700_scheme_note(rf.mode_id)
+    return f"{base} {note}" if note else base
 
 
 def annotate_modes(modes: Iterable[RFMode]) -> list[AnnotatedMode]:

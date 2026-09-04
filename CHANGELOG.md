@@ -6,6 +6,27 @@ All notable changes to llrpkit are documented in this file. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **R700 mode-number decoding** (`llrpkit.modes`): `generic_description` now
+  decodes Impinj's documented R700 mode numbering — three-digit static modes
+  (region + Miller), Gen2 AutoSet families (`11xx`/`12xx`/`13xx`), Gen2X static
+  (`4xxx`), and Gen2X AutoSet (`5xxx`) — and `is_autoset_mode_id` classifies
+  them correctly (Gen2X `4xxx` static modes are no longer mis-flagged as
+  AutoSet). Sourced from the Impinj R700 *Reader Modes* application note v2.1.
+
+### Docs
+
+- Field guide, R700 onboarding: an **antenna hub** section (up to 32 antennas via
+  R702 hubs — activation with `config feature enable anthub`, 1–32 port
+  renumbering, ~1.7 dB insertion loss); `config rfid llrp connclose` to recover a
+  stuck LLRP client slot; and a clarified TLS note (the reader supports 5085/TLS
+  and reader-initiated connections; llrpkit's client is plaintext/inbound today).
+- Field guide, reader modes: the **R700 mode-number scheme and Gen2X** (M800-only)
+  explained.
+- Confirmed dynamic antenna handling works for hub-sized readers with a test
+  (`antenna_count=32` → 32 antennas, inventory on a hub-range antenna).
+
 ## [0.2.0] - 2026-08-25
 
 Complete reader control from the dashboard, and host-side ignore policies.
