@@ -1,0 +1,1128 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A modern asyncio LLRP toolkit for Impinj RAIN RFID readers.">
+      
+      
+      
+      
+        <link rel="prev" href="../api/">
+      
+      
+        <link rel="next" href="../comparison/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Integrating downstream - llrpkit</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#integrating-llrpkit-with-downstream-systems" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="llrpkit" class="md-header__button md-logo" aria-label="llrpkit" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            llrpkit
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Integrating downstream
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="llrpkit" class="md-nav__button md-logo" aria-label="llrpkit" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    llrpkit
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Field guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Field guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../field-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../field-guide/llrp-basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLRP in plain English
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../field-guide/sessions-and-targets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions & targets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../field-guide/reader-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reader modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../field-guide/tagfocus-and-tid/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TagFocus & TID
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../field-guide/antenna-health/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Antenna health
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../field-guide/r700-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    R700 onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reader policies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API tour
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrating downstream
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrating downstream
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installing-llrpkit-on-the-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installing llrpkit on the host
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ignore-policies-keep-the-stream-light" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignore policies keep the stream light
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-a-transport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a transport
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mqtt-topics-and-payloads-pinned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MQTT topics and payloads (pinned)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#webhook-contract-pinned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Webhook contract (pinned)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-zero-hardware-proof-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The zero-hardware proof chain
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How llrpkit compares
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installing-llrpkit-on-the-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installing llrpkit on the host
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ignore-policies-keep-the-stream-light" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ignore policies keep the stream light
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-a-transport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a transport
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mqtt-topics-and-payloads-pinned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MQTT topics and payloads (pinned)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#webhook-contract-pinned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Webhook contract (pinned)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-zero-hardware-proof-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The zero-hardware proof chain
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="integrating-llrpkit-with-downstream-systems">Integrating llrpkit with downstream systems</h1>
+<p>This page is the contract sheet for anyone consuming llrpkit's output —
+an ERP bridge, a data pipeline, a dashboard of your own. Everything here is
+<strong>pinned</strong>: field names never change or disappear within a release line
+(new fields may be added). Hand this page to the team on the other side of
+the wire and they can build without guessing.</p>
+<h2 id="installing-llrpkit-on-the-host">Installing llrpkit on the host</h2>
+<p>llrpkit is on PyPI — install it with the extra your deployment needs:</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"llrpkit[mqtt]"</span><span class="w">        </span><span class="c1"># broker deployments</span>
+<span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"llrpkit[webhook]"</span><span class="w">     </span><span class="c1"># direct-POST deployments</span>
+</code></pre></div>
+<p>Pin a version in your deployment docs (<code>pip install "llrpkit[mqtt]==0.2.0"</code>).
+Prefer an offline install from the wheel attached to each GitHub Release? That
+still works: <code>pip install "llrpkit-0.2.0-py3-none-any.whl[mqtt]"</code>.</p>
+<h2 id="ignore-policies-keep-the-stream-light">Ignore policies keep the stream light</h2>
+<p>Since v0.2.0 a reader can carry an <strong>ignore policy</strong> — a host-side rule set
+that decides which tags each antenna is allowed to see, by item category.
+Ignored tags are dropped in llrpkit, next to the readers, <strong>before</strong> they
+reach any sink, so a downstream server (an ERP on modest hardware) only
+receives the tags it should act on. This is the recommended way to keep
+Odoo light: filter at the edge, not in the database.</p>
+<p>The policy is a JSON document (<code>llrpkit inventory --policy FILE</code>, or the
+dashboard Control tab). Its shape:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"ignore_unknown"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"min_rssi_dbm"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"catalog"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"match"</span><span class="p">:</span><span class="w"> </span><span class="s2">"epc_prefix"</span><span class="p">,</span><span class="w"> </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"e200aa"</span><span class="p">,</span><span class="w"> </span><span class="nt">"category"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pails"</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">"match"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gtin"</span><span class="p">,</span><span class="w"> </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"80614141123458"</span><span class="p">,</span><span class="w"> </span><span class="nt">"category"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ingredients"</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">"antennas"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"4"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"allow"</span><span class="p">,</span><span class="w"> </span><span class="nt">"categories"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"pails"</span><span class="p">]</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"1"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"deny"</span><span class="p">,</span><span class="w"> </span><span class="nt">"categories"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"pickles-fresh"</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The catalog classifies a tag (match by <code>epc</code> exact, <code>gtin</code>, <code>company_prefix</code>
+— both from the GS1 decode — or <code>epc_prefix</code>); each antenna <code>allow</code>s only
+its categories or <code>deny</code>s a few; unlisted antennas pass everything. Drops
+are counted by antenna, category, and reason and surfaced live in the
+dashboard, so nothing is filtered silently. The payload schemas below are
+unchanged — a policy only changes <em>which</em> tags produce payloads, never
+their shape.</p>
+<h2 id="choosing-a-transport">Choosing a transport</h2>
+<p><strong>MQTT</strong> (<code>llrpkit inventory --mqtt-broker ...</code>) is right when more than one
+consumer wants the stream, or you want the broker's buffering, retained
+status, and Last Will liveness. <strong>Webhooks</strong> (<code>--webhook URL</code>) are right for
+one consumer and no extra moving parts — llrpkit POSTs straight to your
+HTTP endpoint. Both carry the same semantics: presence (arrive/depart)
+events as the meaningful stream, raw reads as optional telemetry.</p>
+<h2 id="mqtt-topics-and-payloads-pinned">MQTT topics and payloads (pinned)</h2>
+<p>Base topic defaults to <code>llrpkit/&lt;reader-host&gt;</code> (<code>--mqtt-topic</code> overrides).</p>
+<p><code>{base}/tags</code> — one JSON object per read (QoS from <code>--mqtt-qos</code>, default 0):</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"reader"</span><span class="p">:</span><span class="w"> </span><span class="s2">"127.0.0.1:5084"</span><span class="p">,</span><span class="w"> </span><span class="nt">"epc"</span><span class="p">:</span><span class="w"> </span><span class="s2">"e28011..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"antenna"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"rssi_dbm"</span><span class="p">:</span><span class="w"> </span><span class="mf">-52.25</span><span class="p">,</span><span class="w"> </span><span class="nt">"phase_deg"</span><span class="p">:</span><span class="w"> </span><span class="mf">123.5</span><span class="p">,</span><span class="w"> </span><span class="nt">"doppler_hz"</span><span class="p">:</span><span class="w"> </span><span class="mf">-12.5</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"channel"</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span><span class="w"> </span><span class="nt">"tid"</span><span class="p">:</span><span class="w"> </span><span class="s2">"e2801105..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="mf">1770950400.123</span><span class="p">}</span>
+</code></pre></div>
+<p><code>{base}/events</code> — with <code>--mqtt-events</code>: arrive/depart edges (always QoS 1):</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="s2">"arrived"</span><span class="p">,</span><span class="w">            </span><span class="c1">// or "departed"</span>
+<span class="w"> </span><span class="nt">"reader"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dock-door-1"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"epc"</span><span class="p">:</span><span class="w"> </span><span class="s2">"e28011..."</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"antenna"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w">                  </span><span class="c1">// null if unknown</span>
+<span class="w"> </span><span class="nt">"dwell_s"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w">               </span><span class="c1">// departures: seconds first→last sighting</span>
+<span class="w"> </span><span class="nt">"reads"</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w">                    </span><span class="c1">// reads during the visit</span>
+<span class="w"> </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="mf">1770950400.123</span><span class="p">}</span>
+</code></pre></div>
+<p><code>{base}/status</code> — retained availability, registered as the MQTT Last Will,
+so the broker itself announces an ungraceful death:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"online"</span><span class="p">,</span><span class="w"> </span><span class="nt">"reader"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dock-door-1"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"topic"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llrpkit/dock-door-1/tags"</span><span class="p">,</span><span class="w"> </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="mf">1770950400.123</span><span class="p">}</span>
+</code></pre></div>
+<h2 id="webhook-contract-pinned">Webhook contract (pinned)</h2>
+<p>With <code>llrpkit inventory --webhook URL --webhook-token TOKEN</code> (or
+<code>llrpkit.webhook.WebhookSink</code>), llrpkit POSTs batched JSON. The <code>reader</code>
+value defaults to <code>host:port</code>; set a meaningful name with <code>--reader-label
+dock-door-1</code> (applies to MQTT payloads too):</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"reader"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dock-door-1"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"token"</span><span class="p">:</span><span class="w"> </span><span class="s2">"TOKEN"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"events"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">   </span><span class="p">{</span><span class="nt">"epc"</span><span class="p">:</span><span class="w"> </span><span class="s2">"e28011..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"arrived"</span><span class="p">,</span><span class="w"> </span><span class="nt">"antenna"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"rssi"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"dwell_s"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"reads"</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="mf">1770950400.123</span><span class="p">}</span>
+<span class="w"> </span><span class="p">]}</span>
+</code></pre></div>
+<p>Rules of the contract: the token travels <strong>in the body</strong>; every entry
+carries the same keys with <code>null</code> where not applicable, and <code>epc</code> is the
+only key a receiver must rely on; <code>kind</code> is <code>arrived</code>, <code>departed</code>, or
+(with <code>--webhook-tags</code>) <code>read</code> — <code>read</code> entries carry <code>rssi</code>; batches hold
+at most 500 entries, flushed at least once per second while entries are
+pending. Expected responses: <code>200</code> (<code>{"ok": true, "created": N}</code>); <code>403</code>
+stops the sink with a token error; <code>400</code> stops it as a malformed-body bug;
+connection failures and 5xx are retried on the next flush from a bounded,
+drop-oldest backlog.</p>
+<p>Field-name note: the MQTT events schema says <code>"event"</code>, the webhook entry
+says <code>"kind"</code>. Both predate each other's consumers and both are pinned
+as-is — map accordingly.</p>
+<h2 id="the-zero-hardware-proof-chain">The zero-hardware proof chain</h2>
+<p>Every integration above can be proven end to end with no reader present:</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>llrpkit<span class="w"> </span>emulate<span class="w"> </span>--port<span class="w"> </span><span class="m">5084</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="gp"># </span>MQTT<span class="w"> </span>path<span class="w"> </span><span class="o">(</span>broker<span class="w"> </span>first<span class="o">)</span>:
+<span class="gp">$ </span>mosquitto<span class="w"> </span><span class="p">&amp;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>llrpkit<span class="w"> </span>inventory<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--search-mode<span class="w"> </span>tagfocus<span class="w"> </span>--mqtt-broker<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--mqtt-events
+<span class="gp"># </span>Webhook<span class="w"> </span>path<span class="w"> </span><span class="o">(</span>your<span class="w"> </span>receiver<span class="w"> </span>first<span class="o">)</span>:
+<span class="gp">$ </span>llrpkit<span class="w"> </span>inventory<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--search-mode<span class="w"> </span>tagfocus<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--webhook<span class="w"> </span>http://erp.local:8069/your/endpoint<span class="w"> </span>--webhook-token<span class="w"> </span>TOKEN
+</code></pre></div>
+<p>llrpkit's own test suite runs both paths against a real Mosquitto broker
+and a real HTTP receiver implementing the contract above, including token
+rejection, batching, outage buffering, and cancellation cleanup — so the
+contracts on this page are enforced by CI, not just documented.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../api/" class="md-footer__link md-footer__link--prev" aria-label="Previous: API tour">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                API tour
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../comparison/" class="md-footer__link md-footer__link--next" aria-label="Next: How llrpkit compares">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                How llrpkit compares
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.footer", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
