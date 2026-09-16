@@ -146,6 +146,8 @@ class LLRPEmulator:
         self._temperature = 41.5
         self._disconnected: set[int] = set()
         self._focus_counts: dict[bytes, int] = {}
+        #: GPI-gated ROSpecs: ro_spec_id -> stop-timeout task (GPI_With_Timeout).
+        self._gpi_stop_timers: dict[int, asyncio.Task[None]] = {}
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -215,6 +217,74 @@ class LLRPEmulator:
                     )
                 )
             )
+            await self._apply_gpi_triggers(port, high)
+
+    async def _apply_gpi_triggers(self, port: int, high: bool) -> None:
+        """Start/stop ROSpecs whose boundary triggers name this GPI edge.
+
+        Mirrors LLRP: an *enabled* ROSpec with a GPI start trigger becomes
+        active on the matching edge (and re-arms after it stops); an active one
+        with a GPI_With_Timeout stop trigger stops on its matching edge, or when
+        its timeout elapses first.
+        """
+        for rid, (spec, state) in list(self._rospecs.items()):
+            b = spec.ro_boundary_spec
+            start, stop = b.ro_spec_start_trigger, b.ro_spec_stop_trigger
+            if (
+                state == "Enabled"
+                and int(start.ro_spec_start_trigger_type) == int(enums.ROSpecStartTriggerType.GPI)
+                and start.gpi_trigger_value is not None
+                and start.gpi_trigger_value.gpi_port_num == port
+                and bool(start.gpi_trigger_value.gpi_event) == high
+            ):
+                self._rospecs[rid] = (spec, "Active")
+                self._focus_counts = {}
+                await self._send_rospec_event(rid, enums.ROSpecEventType.Start_Of_ROSpec)
+                if (
+                    int(stop.ro_spec_stop_trigger_type)
+                    == int(enums.ROSpecStopTriggerType.GPI_With_Timeout)
+                    and stop.gpi_trigger_value is not None
+                    and stop.gpi_trigger_value.timeout
+                ):
+                    self._gpi_stop_timers[rid] = asyncio.get_running_loop().create_task(
+                        self._gpi_stop_after(rid, stop.gpi_trigger_value.timeout / 1000.0)
+                    )
+            elif (
+                state == "Active"
+                and int(stop.ro_spec_stop_trigger_type)
+                == int(enums.ROSpecStopTriggerType.GPI_With_Timeout)
+                and stop.gpi_trigger_value is not None
+                and stop.gpi_trigger_value.gpi_port_num == port
+                and bool(stop.gpi_trigger_value.gpi_event) == high
+            ):
+                await self._gpi_stop_rospec(rid)
+        self._sync_reporting()
+
+    async def _gpi_stop_after(self, rid: int, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+        if self._rospecs.get(rid, (None, ""))[1] == "Active":
+            await self._gpi_stop_rospec(rid)
+            self._sync_reporting()
+
+    async def _gpi_stop_rospec(self, rid: int) -> None:
+        spec, _ = self._rospecs[rid]
+        self._rospecs[rid] = (spec, "Enabled")  # re-armed for the next edge
+        timer = self._gpi_stop_timers.pop(rid, None)
+        if timer is not None and timer is not asyncio.current_task():
+            timer.cancel()
+        await self._send_rospec_event(rid, enums.ROSpecEventType.End_Of_ROSpec)
+
+    async def _send_rospec_event(self, rid: int, event_type: int) -> None:
+        await self._send(
+            messages.READER_EVENT_NOTIFICATION(
+                reader_event_notification_data=params.ReaderEventNotificationData(
+                    timestamp=params.UTCTimestamp(microseconds=self._now_us()),
+                    ro_spec_event=params.ROSpecEvent(
+                        event_type=int(event_type), ro_spec_id=rid, preempting_ro_spec_id=0
+                    ),
+                )
+            )
+        )
 
     def set_temperature(self, celsius: float) -> None:
         """Set the temperature reported via the Octane extension."""
@@ -412,9 +482,15 @@ class LLRPEmulator:
             await self._send(messages.START_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
         elif isinstance(msg, messages.STOP_ROSPEC):
             status = self._set_rospec_state(msg.ro_spec_id, "Active", "Enabled")
+            timer = self._gpi_stop_timers.pop(msg.ro_spec_id, None)
+            if timer is not None:
+                timer.cancel()
             self._sync_reporting()
             await self._send(messages.STOP_ROSPEC_RESPONSE(llrp_status=status), message_id=mid)
         elif isinstance(msg, messages.DELETE_ROSPEC):
+            timer = self._gpi_stop_timers.pop(msg.ro_spec_id, None)
+            if timer is not None:
+                timer.cancel()
             if msg.ro_spec_id in self._rospecs:
                 del self._rospecs[msg.ro_spec_id]
                 status = self._status_ok()

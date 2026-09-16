@@ -95,7 +95,7 @@ own result name (`"Tag_Memory_Locked_Error"` and friends). Always pass
 `target_epc` with more than one tag in the field. CLI: `llrpkit read`,
 `llrpkit write`, `llrpkit write-epc`.
 
-## Filters, GPIO, presence, decoding
+## Filters, GPIO, gated inventory, presence, decoding
 
 ```python
 async for tag in reader.inventory(epc_filter="e280", filter_action="include"):
@@ -103,6 +103,9 @@ async for tag in reader.inventory(epc_filter="e280", filter_action="include"):
 
 state = await reader.get_gpio()               # {1: "low", ...}, {1: False, ...}
 await reader.set_gpo(2, True)                 # stack light on
+
+async for window in reader.windows(gpi_trigger=1):   # a photo eye on GPI 1
+    print(window.epcs or "NOTHING READ", window.duration)   # one per object
 
 from llrpkit import PresenceTracker, decode_epc, ticked_stream
 
@@ -116,8 +119,10 @@ decode_epc("3074257bf7194e4000001a85").gs1    # "(01) 80614141123458 (21) 6789"
 ```
 
 Select filters run **on the reader** (C1G2 Select), so unwanted tags never
-cost airtime. GPI edges arrive through `reader.events()` as `GPIEvent`
-notifications. `PresenceTracker` turns the read firehose into arrive/depart
+cost airtime. `windows()` is [gated inventory](field-guide/gated-inventory.md):
+the reader starts and stops reading on the GPI line itself and llrpkit folds
+what it read into one `InventoryWindow` per trip — empty ones included. GPI
+edges are also available raw via `reader.gpi_events()` (`GPIEdge`). `PresenceTracker` turns the read firehose into arrive/depart
 edges (`min_reads` debounces strays; `depart_after` defines gone), and
 `llrpkit.epc` decodes GS1 schemes — SGTIN-96 through GID-96 — into GTINs,
 SSCCs, and pure-identity URIs.

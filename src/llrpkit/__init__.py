@@ -31,6 +31,7 @@ from llrpkit.exceptions import (
     MessageDecodeError,
     MessageEncodeError,
 )
+from llrpkit.gating import GPIEdge, InventoryWindow
 from llrpkit.health import HealthAlert, HealthMonitor
 from llrpkit.inventory import TagReport
 from llrpkit.modes import AnnotatedMode, ModeGuidance, annotate_modes, suggest_mode
@@ -57,10 +58,12 @@ __all__ = [
     "CapabilityError",
     "CatalogEntry",
     "DecodedEPC",
+    "GPIEdge",
     "GPIOState",
     "HealthAlert",
     "HealthMonitor",
     "InventoryProfile",
+    "InventoryWindow",
     "ItemCatalog",
     "LLRPClient",
     "LLRPConnectionError",

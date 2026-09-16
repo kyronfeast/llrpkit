@@ -109,8 +109,10 @@ or an R700 in LLRP mode. The full dashboard demo (`llrpkit demo`) arrives with P
 ## Roadmap
 
 All five build phases are shipped — wire protocol & codegen, client & inventory,
-tuning & antenna health, dashboard, and docs/hardening — and the current release
-(`v0.2.0`) adds host-side ignore policies and full dashboard control. Full history
+tuning & antenna health, dashboard, and docs/hardening — `v0.2.0` added host-side
+ignore policies and full dashboard control, and `v0.3.0` adds **gated inventory** —
+a photo eye on a GPI line yields one window of tags per object, empty windows
+included, with the reader owning the trigger. Full history
 in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Development

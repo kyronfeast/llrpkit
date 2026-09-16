@@ -6,8 +6,24 @@ All notable changes to llrpkit are documented in this file. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-16
+
 ### Added
 
+- **Gated inventory** (`llrpkit.gating`, `Reader.inventory(gpi_trigger=...)`,
+  `Reader.gpi_events()`, `Reader.windows()`): a photo eye on a GPI line drives
+  reading *on the reader* — the ROSpec carries a GPI start trigger and a
+  GPI-with-timeout stop trigger, is armed by `ENABLE` alone and re-arms per
+  edge. `GPIEdge` transitions are fanned out on a dedicated client queue
+  (`LLRPClient.gpi_edges`) so a windows consumer never competes with a health
+  monitor. `windows()` folds edges and tags into one `InventoryWindow` per
+  trip (`opened_at`/`closed_at`/`tags`/`epcs`/`empty`), with a settle grace for
+  late reports and `max_open` for a stuck line — **empty windows are yielded**,
+  because an object that passed with no readable tag is the exception a line
+  most needs. Default active level is high (R700 inputs read low with nothing
+  applied). Emulator: `set_gpi()` now starts/stops GPI-triggered ROSpecs and
+  honours the stop timeout, with `ROSpecEvent` notifications. Field-guide page
+  *Gated inventory (photo eyes)* covers wiring and the interposing-relay tip.
 - **R700 mode-number decoding** (`llrpkit.modes`): `generic_description` now
   decodes Impinj's documented R700 mode numbering — three-digit static modes
   (region + Miller), Gen2 AutoSet families (`11xx`/`12xx`/`13xx`), Gen2X static
@@ -231,3 +247,6 @@ in-package emulator, then hardened by an adversarial pre-release QA pass
 - Stable core surface: the `LLRPError` exception hierarchy, protocol constants
   (`LLRP_PORT`, `LLRP_TLS_PORT`, `MESSAGE_HEADER_LEN`, `IMPINJ_PEN`, `LLRPVersion`),
   and the `llrpkit` CLI entry point with `version`.
+
+[Unreleased]: https://github.com/kyronfeast/llrpkit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kyronfeast/llrpkit/compare/v0.2.0...v0.3.0

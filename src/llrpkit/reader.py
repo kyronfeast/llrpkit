@@ -19,7 +19,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from llrpkit.modes import AnnotatedMode
@@ -32,6 +32,13 @@ from llrpkit.exceptions import (
     LLRPConnectionError,
     LLRPError,
     LLRPTimeoutError,
+)
+from llrpkit.gating import (
+    END_OF_STREAM,
+    GPIEdge,
+    InventoryWindow,
+    assemble_windows,
+    pump_into,
 )
 from llrpkit.inventory import DEFAULT_ROSPEC_ID, TagReport, build_rospec
 from llrpkit.protocol import LLRPMessage, enums, impinj, messages, params
@@ -566,6 +573,24 @@ class Reader:
                 continue
             yield msg
 
+    async def gpi_events(self) -> AsyncGenerator[GPIEdge, None]:
+        """Transitions on the reader's GPI lines, as :class:`~llrpkit.gating.GPIEdge`.
+
+        A separate feed from :meth:`events` so a gated-inventory consumer and a
+        health monitor never compete for the same queue. Ports must be enabled
+        (:meth:`set_gpi_enabled`) for the reader to report them. Ends when the
+        connection closes.
+        """
+        while True:
+            try:
+                async with asyncio.timeout(0.25):
+                    edge = await self.client.gpi_edges.get()
+            except TimeoutError:
+                if not self.client.connected:
+                    return
+                continue
+            yield edge
+
     # -- inventory ---------------------------------------------------------
 
     async def inventory(
@@ -587,6 +612,9 @@ class Reader:
         max_tags: int | None = None,
         ro_spec_id: int = DEFAULT_ROSPEC_ID,
         policy: ReaderPolicy | None = None,
+        gpi_trigger: int | None = None,
+        gpi_active_high: bool = True,
+        gpi_stop_timeout: float | None = None,
     ) -> AsyncGenerator[TagReport, None]:
         """Stream tag observations until ``duration``/``max_tags`` or ``break``.
 
@@ -602,6 +630,19 @@ class Reader:
         ends. Impinj report content (sub-dBm RSSI, plus phase / Doppler /
         TID when requested) is enabled automatically when the Octane
         extensions handshake succeeded.
+
+        ``gpi_trigger`` gates the inventory on a sensor line: the reader itself
+        starts reading when GPI ``gpi_trigger`` goes to the active level and
+        stops when it returns, re-arming for
+        the next trip — no host round-trip per object. ``gpi_stop_timeout``
+        (seconds) caps a read whose release never comes. The port is enabled
+        for you. Pair it with :meth:`gpi_events`, or use :meth:`windows` to
+        get one bundle of tags per trip.
+
+        Active level: an R700's inputs are optically isolated and read *low*
+        with nothing applied, so a sensor (or the relay it drives) that puts
+        voltage on the pin makes it *high* — hence ``gpi_active_high=True``
+        by default. Pass ``False`` for a sinking sensor on a pulled-up input.
         """
         if self._inventory_active:
             raise LLRPError("an inventory stream is already active on this reader")
@@ -625,6 +666,9 @@ class Reader:
             include_phase=include_phase,
             include_doppler=include_doppler,
             include_tid=include_tid,
+            gpi_trigger_port=gpi_trigger,
+            gpi_active_high=gpi_active_high,
+            gpi_stop_timeout_ms=int((gpi_stop_timeout or 0) * 1000),
         )
         client = self.client
         self._inventory_active = True
@@ -635,8 +679,13 @@ class Reader:
             while not client.reports.empty():  # drop stale reports
                 client.reports.get_nowait()
             check_status(await client.transact(messages.ADD_ROSPEC(ro_spec=rospec)))
+            if gpi_trigger is not None:
+                await self.set_gpi_enabled(gpi_trigger, True)
             check_status(await client.transact(messages.ENABLE_ROSPEC(ro_spec_id=ro_spec_id)))
-            check_status(await client.transact(messages.START_ROSPEC(ro_spec_id=ro_spec_id)))
+            if gpi_trigger is None:
+                # Host-driven: start now. A GPI-triggered ROSpec is armed by
+                # ENABLE alone and started by the reader on each edge.
+                check_status(await client.transact(messages.START_ROSPEC(ro_spec_id=ro_spec_id)))
             loop = asyncio.get_running_loop()
             deadline = loop.time() + duration if duration is not None else None
             yielded = 0
@@ -679,3 +728,54 @@ class Reader:
                     await client.transact(
                         messages.DELETE_ROSPEC(ro_spec_id=ro_spec_id), timeout=2.0
                     )
+
+    async def windows(
+        self,
+        gpi_trigger: int,
+        *,
+        gpi_active_high: bool = True,
+        settle: float = 0.1,
+        max_open: float | None = 30.0,
+        **inventory_opts: Any,
+    ) -> AsyncGenerator[InventoryWindow, None]:
+        """One :class:`~llrpkit.gating.InventoryWindow` per trip of a sensor line.
+
+        Runs a GPI-gated :meth:`inventory` and the :meth:`gpi_events` feed
+        together and folds them: a window opens when GPI ``gpi_trigger`` goes
+        active, collects every tag until it releases (plus a ``settle`` grace
+        for late reports), and is yielded — **empty windows included**, because
+        an object that passed with no readable tag is the exception a line most
+        needs to see. ``max_open`` force-closes a window whose release never
+        arrives. Remaining options go to :meth:`inventory` (``policy=`` etc.).
+        """
+        queue: asyncio.Queue[Any] = asyncio.Queue()
+        edges = self.gpi_events()
+        tags = self.inventory(
+            gpi_trigger=gpi_trigger, gpi_active_high=gpi_active_high, **inventory_opts
+        )
+        tasks = [
+            asyncio.create_task(pump_into(edges, queue)),
+            asyncio.create_task(pump_into(tags, queue)),
+        ]
+
+        async def _watch() -> None:
+            # When the inventory stream ends (duration/max_tags), end the windows.
+            await asyncio.wait({tasks[1]})
+            await queue.put(END_OF_STREAM)
+
+        watcher = asyncio.create_task(_watch())
+        try:
+            async for window in assemble_windows(
+                queue,
+                port=gpi_trigger,
+                active_high=gpi_active_high,
+                settle=settle,
+                max_open=max_open,
+            ):
+                yield window
+        finally:
+            for t in (*tasks, watcher):
+                t.cancel()
+            await asyncio.gather(*tasks, watcher, return_exceptions=True)
+            await edges.aclose()
+            await tags.aclose()

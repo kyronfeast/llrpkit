@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from typing import Any, Final
 
 from llrpkit.constants import LLRP_PORT, MESSAGE_HEADER_LEN
@@ -31,6 +32,7 @@ from llrpkit.exceptions import (
     LLRPTimeoutError,
     MessageDecodeError,
 )
+from llrpkit.gating import GPIEdge
 from llrpkit.protocol import LLRPMessage, decode_message, enums, messages, params
 
 log = logging.getLogger(__name__)
@@ -84,6 +86,9 @@ class LLRPClient:
         #: Unsolicited reader events (notifications, unmatched responses).
         #: Bounded like :attr:`reports`.
         self.events: asyncio.Queue[LLRPMessage] = asyncio.Queue(maxsize=max_queued_events)
+        #: GPI line transitions, fanned out separately from ``events`` so a
+        #: gated-inventory consumer never competes with a health monitor.
+        self.gpi_edges: asyncio.Queue[GPIEdge] = asyncio.Queue(maxsize=max_queued_events)
         #: Reports/events discarded because their queue was full.
         self.dropped_reports = 0
         self.dropped_events = 0
@@ -248,6 +253,14 @@ class LLRPClient:
             if event is not None and self._conn_event is not None and not self._conn_event.done():
                 self._conn_event.set_result(event)
                 return
+            gpi = msg.reader_event_notification_data.gpi_event
+            if gpi is not None:
+                ts = msg.reader_event_notification_data.timestamp
+                at = getattr(ts, "microseconds", 0) / 1e6 or time.time()
+                self._offer(
+                    self.gpi_edges,
+                    GPIEdge(port=gpi.gpi_port_number, high=bool(gpi.gpi_event), at=at),
+                )
             self.dropped_events += self._offer(self.events, msg)
             return
         fut = self._pending.pop(msg.message_id, None)
