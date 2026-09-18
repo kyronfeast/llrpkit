@@ -561,6 +561,10 @@ def emit_impinj_module(model: Model) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _normalise(text: str) -> str:
+    return text.replace("\r\n", "\n")
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -585,7 +589,10 @@ def main(argv: list[str]) -> int:
         stale = []
         for fname, text in outputs.items():
             path = OUT_DIR / fname
-            if not path.exists() or path.read_text() != text:
+            # Explicit UTF-8 (the modules carry non-ASCII in docstrings; Windows'
+            # default codec is cp1252) and newline-normalised, so a CRLF checkout
+            # or a non-UTF-8 locale never reports a byte-identical module as stale.
+            if not path.exists() or _normalise(path.read_text(encoding="utf-8")) != text:
                 stale.append(fname)
         if stale:
             print(f"STALE generated modules: {', '.join(stale)} — run codegen/generate.py")
@@ -595,7 +602,7 @@ def main(argv: list[str]) -> int:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for fname, text in outputs.items():
-        (OUT_DIR / fname).write_text(text)
+        (OUT_DIR / fname).write_text(text, encoding="utf-8", newline="\n")
     print(
         f"Generated {len(model.core_enums)} enums, {len(model.core_params)} parameters, "
         f"{len(model.core_messages)} messages, "

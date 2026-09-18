@@ -986,6 +986,14 @@ class LLRPEmulator:
         return True
 
     async def _report_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        # Pace against a running due-time rather than sleeping one period per
+        # read: event-loop timers are quantised (~15.6 ms on Windows, where a
+        # 1.5 ms sleep either returns at once or waits a full tick), which would
+        # otherwise pin every RF mode to the same rate. A read is emitted only
+        # once its slot is due, and a late wake emits the slots it missed, so
+        # the average rate is reads_per_sec times the factors whatever the timer does.
+        next_due = loop.time()
         try:
             while True:
                 profile = self._scan_profile()
@@ -993,7 +1001,14 @@ class LLRPEmulator:
                 # tags are energized at all (visibility rule below).
                 power_scale = 0.55 + 0.45 * (profile.power_dbm - 10.0) / 20.0
                 rate = max(1.0, self.reads_per_sec * profile.rate_factor * power_scale)
-                await asyncio.sleep(1.0 / rate)
+                next_due += 1.0 / rate
+                delay = next_due - loop.time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                else:
+                    if delay < -0.25:  # stalled (paused, debugger): don't burst-catch-up
+                        next_due = loop.time()
+                    await asyncio.sleep(0)  # yield so the writer can flush
                 antennas, content = profile.antennas, profile.content
                 visible = [
                     t

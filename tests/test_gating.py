@@ -133,11 +133,14 @@ async def test_gpi_triggered_rospec_reads_only_while_line_is_tripped(
         await emu.set_gpi(1, True)  # photo eye blocked → voltage on GPI1 → reader starts
         await asyncio.sleep(0.3)
         assert len(seen) > 0
-        n = len(seen)
 
         await emu.set_gpi(1, False)  # released → reader stops
+        # Reports already on the wire at the instant of release still land; measure
+        # "nothing more" after that in-flight tail has drained, not before.
         await asyncio.sleep(0.3)
-        assert len(seen) == n  # nothing more
+        n = len(seen)
+        await asyncio.sleep(0.3)
+        assert len(seen) == n  # nothing more once the line is released
 
         await emu.set_gpi(1, True)  # re-armed automatically: second trip reads again
         await asyncio.sleep(0.3)
