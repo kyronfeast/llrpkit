@@ -147,25 +147,10 @@ class WebhookSink:
                 while pending:
                     chunk = pending[: self.batch_max]
                     body = {"reader": label, "token": self.token, "events": chunk}
-                    # The request runs in its own task: cancel scopes inside
-                    # httpx/anyio then only ever cancel that task, never this one.
-                    # On Windows a refused localhost connect takes ~1 s, outliving
-                    # anyio's 0.25 s happy-eyeballs scope, and its cancellation can
-                    # leak out of client.post as a bare CancelledError; awaited
-                    # through a child task it is just a failed request, while a
-                    # genuine cancel of the sink still shows in our own counter.
-                    task = asyncio.current_task()
-                    cancels_before = task.cancelling() if task is not None else 0
-                    post = asyncio.ensure_future(client.post(self.url, json=body))
                     try:
-                        response = await post
+                        response = await client.post(self.url, json=body)
                     except httpx.HTTPError:
                         return  # receiver unreachable; keep the batch, retry later
-                    except asyncio.CancelledError:
-                        if task is not None and task.cancelling() > cancels_before:
-                            post.cancel()  # the caller cancelled us: drop the request
-                            raise
-                        return  # the request's own cancellation leaked: unreachable
                     finally:
                         _resurface()
                     if response.status_code == 403:

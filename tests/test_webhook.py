@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -266,44 +265,3 @@ def test_cli_inventory_posts_to_webhook() -> None:
     finally:
         server_box["server"].should_exit = True
         thread.join(timeout=10.0)
-
-
-async def test_leaked_request_cancellation_is_treated_as_unreachable(monkeypatch: Any) -> None:
-    """On Windows a refused localhost connect takes ~1 s, outliving anyio's 0.25 s
-    happy-eyeballs scope inside httpx, and a bare CancelledError (no message) can
-    escape ``client.post``. The sink must treat that like any other unreachable
-    receiver (keep the batch, retry later) and not report itself cancelled, while
-    a genuine cancel of the sink still stops it (see the cancellation test)."""
-    import httpx
-
-    calls = 0
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            # What the leak looks like from the sink: the task running the request
-            # is cancelled, with no message, while parked on a future.
-            task = asyncio.current_task()
-            assert task is not None
-            asyncio.get_running_loop().call_soon(task.cancel)
-            await asyncio.Event().wait()  # never set; the cancel lands here
-        return httpx.Response(200, json={"ok": True, "created": 1})
-
-    real_client = httpx.AsyncClient
-
-    def patched_client(**kwargs: Any) -> httpx.AsyncClient:
-        return real_client(transport=httpx.MockTransport(handler), **kwargs)
-
-    # the sink builds its own client; hand it one whose transport is the handler
-    monkeypatch.setattr(
-        "llrpkit.webhook.httpx", SimpleNamespace(**{**vars(httpx), "AsyncClient": patched_client})
-    )
-
-    tag = EmulatedTag(epc=b"\xe2\x66" + b"\x00" * 10, antennas=(1,))
-    async with make_emulator(tags=[tag]) as emu, Reader("127.0.0.1", emu.port) as reader:
-        sink = WebhookSink("http://127.0.0.1:1/x", token=TOKEN, flush_interval=0.2)
-        posted = await sink.run(reader, search_mode=2, session=1, duration=1.5)
-    assert calls >= 2, "the leaked cancel must not end the sink"
-    assert posted >= 1, "the batch held through the leak is delivered on the retry"
-    assert asyncio.current_task().cancelling() == 0  # type: ignore[union-attr]
