@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -131,7 +132,12 @@ def test_cli_sweep_requires_an_axis() -> None:
 
     result = runner.invoke(app, ["sweep", "127.0.0.1"])
     assert result.exit_code != 0
-    assert "--powers and/or --modes" in result.output
+    # typer/rich render the error in a coloured box and wrap it at 80 columns, so the
+    # phrase may be split across lines: compare plain, single-spaced text.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    plain = re.sub(r"[│╭╮╰╯─]+", " ", plain)
+    plain = re.sub(r"\s+", " ", plain)
+    assert "--powers and/or --modes" in plain
 
 
 # --- profiles CLI ------------------------------------------------------------

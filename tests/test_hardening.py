@@ -314,12 +314,23 @@ async def test_cancelled_connect_releases_the_transport() -> None:
     """BUG: cancelling connect() while it waited for the ConnectionAttemptEvent
     skipped the abort path: the socket and read task leaked, and `connected`
     reported True on a client that never finished its handshake."""
-    server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)  # silent peer
+    # A peer that accepts and then says nothing. It must HOLD the connection: a handler
+    # that simply returns drops its StreamWriter, and newer asyncio closes the transport
+    # when the writer is garbage-collected, so the client saw "connection lost" before
+    # the test ever cancelled it.
+    peers: list[asyncio.StreamWriter] = []
+
+    async def silent(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        peers.append(writer)
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(silent, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     try:
         client = LLRPClient("127.0.0.1", port)
         task = asyncio.create_task(client.connect())
         await asyncio.sleep(0.2)  # parked waiting for the (never-sent) event
+        assert not task.done(), "peer must stay silent for this test to mean anything"
         task.cancel()
         done, _ = await asyncio.wait({task}, timeout=3.0)
         assert done
@@ -328,5 +339,7 @@ async def test_cancelled_connect_releases_the_transport() -> None:
         assert client._writer is None
         assert client._read_task is None
     finally:
+        for w in peers:
+            w.close()
         server.close()
         await server.wait_closed()

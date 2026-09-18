@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -85,7 +86,7 @@ async def test_settle_catches_late_reports_and_active_high_works() -> None:
     await q.put(GPIEdge(port=1, high=False, at=t0 + 0.3))
     await q.put(_tag(PAIL_B))  # straggler inside the settle window
     await q.put(END_OF_STREAM)
-    windows = [w async for w in assemble_windows(q, port=1, active_high=True, settle=0.05)]  # type: ignore[arg-type]
+    windows = [w async for w in assemble_windows(q, port=1, active_high=True, settle=0.05)]
     assert len(windows) == 1
     assert windows[0].epcs == (PAIL_A.hex(), PAIL_B.hex())
 
@@ -94,7 +95,7 @@ async def test_max_open_force_closes_a_stuck_gate() -> None:
     q: asyncio.Queue[object] = asyncio.Queue()
     await q.put(GPIEdge(port=1, high=False, at=time.time()))
     await q.put(_tag(PAIL_A))
-    gen = assemble_windows(q, port=1, settle=0.01, max_open=0.05)  # type: ignore[arg-type]
+    gen = assemble_windows(q, port=1, settle=0.01, max_open=0.05)
     w = await asyncio.wait_for(anext(gen), timeout=2.0)  # no release edge ever comes
     assert w.epcs == (PAIL_A.hex(),)
     await gen.aclose()
@@ -104,7 +105,7 @@ async def test_max_open_force_closes_a_stuck_gate() -> None:
 
 
 @pytest.fixture
-async def gated_emu() -> LLRPEmulator:
+async def gated_emu() -> AsyncIterator[LLRPEmulator]:
     emu = LLRPEmulator(reads_per_sec=300.0, seed=3)
     emu.tags = [EmulatedTag(epc=PAIL_A, antennas=(1,), rssi_dbm=-45.0)]
     await emu.start()
