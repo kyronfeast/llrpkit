@@ -268,12 +268,12 @@ def test_cli_inventory_posts_to_webhook() -> None:
         thread.join(timeout=10.0)
 
 
-async def test_anyio_scope_cancel_leak_is_treated_as_unreachable(monkeypatch: Any) -> None:
+async def test_leaked_request_cancellation_is_treated_as_unreachable(monkeypatch: Any) -> None:
     """On Windows a refused localhost connect takes ~1 s, outliving anyio's 0.25 s
-    happy-eyeballs scope inside httpx, and anyio's own CancelledError can escape
-    ``client.post`` with the task's cancel count left raised. The sink must treat
-    that like any other unreachable receiver (keep the batch, retry later) and
-    not report itself cancelled — while a genuine cancel still stops it."""
+    happy-eyeballs scope inside httpx, and a bare CancelledError (no message) can
+    escape ``client.post``. The sink must treat that like any other unreachable
+    receiver (keep the batch, retry later) and not report itself cancelled, while
+    a genuine cancel of the sink still stops it (see the cancellation test)."""
     import httpx
 
     calls = 0
@@ -282,13 +282,11 @@ async def test_anyio_scope_cancel_leak_is_treated_as_unreachable(monkeypatch: An
         nonlocal calls
         calls += 1
         if calls == 1:
-            # What anyio's deadline delivery does: cancel the host task with its
-            # marker message while it is parked on a future, so the CancelledError
-            # lands in the await below and escapes httpx unswallowed.
+            # What the leak looks like from the sink: the task running the request
+            # is cancelled, with no message, while parked on a future.
             task = asyncio.current_task()
             assert task is not None
-            reason = "Cancelled via cancel scope deadbeef by <Task pending>"
-            asyncio.get_running_loop().call_soon(task.cancel, reason)
+            asyncio.get_running_loop().call_soon(task.cancel)
             await asyncio.Event().wait()  # never set; the cancel lands here
         return httpx.Response(200, json={"ok": True, "created": 1})
 
