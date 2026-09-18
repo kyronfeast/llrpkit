@@ -86,6 +86,41 @@ class TagReport:
         )
 
 
+def _boundary(
+    gpi_port: int | None, active_high: bool, stop_timeout_ms: int
+) -> params.ROBoundarySpec:
+    """Null start/stop (host-driven) or GPI start/stop (sensor-driven)."""
+    if gpi_port is None:
+        return params.ROBoundarySpec(
+            ro_spec_start_trigger=params.ROSpecStartTrigger(
+                ro_spec_start_trigger_type=enums.ROSpecStartTriggerType.Null
+            ),
+            ro_spec_stop_trigger=params.ROSpecStopTrigger(
+                ro_spec_stop_trigger_type=enums.ROSpecStopTriggerType.Null,
+                duration_trigger_value=0,
+            ),
+        )
+    if gpi_port < 1:
+        raise ValueError(f"gpi_trigger_port must be >= 1, got {gpi_port}")
+    # GPITriggerValue.gpi_event is the level the line moves TO. Start on the
+    # active level, stop on the inactive one.
+    return params.ROBoundarySpec(
+        ro_spec_start_trigger=params.ROSpecStartTrigger(
+            ro_spec_start_trigger_type=enums.ROSpecStartTriggerType.GPI,
+            gpi_trigger_value=params.GPITriggerValue(
+                gpi_port_num=gpi_port, gpi_event=active_high, timeout=0
+            ),
+        ),
+        ro_spec_stop_trigger=params.ROSpecStopTrigger(
+            ro_spec_stop_trigger_type=enums.ROSpecStopTriggerType.GPI_With_Timeout,
+            duration_trigger_value=0,
+            gpi_trigger_value=params.GPITriggerValue(
+                gpi_port_num=gpi_port, gpi_event=not active_high, timeout=stop_timeout_ms
+            ),
+        ),
+    )
+
+
 def build_rospec(
     *,
     ro_spec_id: int = DEFAULT_ROSPEC_ID,
@@ -108,6 +143,9 @@ def build_rospec(
     include_phase: bool = False,
     include_doppler: bool = False,
     include_tid: bool = False,
+    gpi_trigger_port: int | None = None,
+    gpi_active_high: bool = True,
+    gpi_stop_timeout_ms: int = 0,
 ) -> params.ROSpec:
     """Assemble a complete ROSpec for a llrpkit-managed inventory.
 
@@ -125,6 +163,13 @@ def build_rospec(
     ``ReaderCapabilities.power_index_for_dbm``); ``hop_table_id`` and
     ``channel_index`` matter only for frequency-hopping / fixed-channel
     regulatory regions respectively.
+
+    ``gpi_trigger_port`` makes the ROSpec *gated by a sensor line*: it starts
+    when that GPI moves to the active level (high by default — R700 inputs
+    read low with nothing applied; ``gpi_active_high=False`` for sinking sensors)
+    and stops when it moves back, with ``gpi_stop_timeout_ms`` as a safety cap
+    (0 = none). Such a ROSpec is only ``ENABLE``d, never ``START``ed — the
+    reader re-arms it on every trip of the line.
     """
     if not 0 <= session <= 3:
         raise ValueError(f"session must be 0-3, got {session}")
@@ -242,15 +287,7 @@ def build_rospec(
         ro_spec_id=ro_spec_id,
         priority=0,
         current_state=enums.ROSpecState.Disabled,
-        ro_boundary_spec=params.ROBoundarySpec(
-            ro_spec_start_trigger=params.ROSpecStartTrigger(
-                ro_spec_start_trigger_type=enums.ROSpecStartTriggerType.Null
-            ),
-            ro_spec_stop_trigger=params.ROSpecStopTrigger(
-                ro_spec_stop_trigger_type=enums.ROSpecStopTriggerType.Null,
-                duration_trigger_value=0,
-            ),
-        ),
+        ro_boundary_spec=_boundary(gpi_trigger_port, gpi_active_high, gpi_stop_timeout_ms),
         spec_parameters=[ai_spec],
         ro_report_spec=report_spec,
     )

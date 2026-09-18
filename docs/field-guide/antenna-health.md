@@ -35,7 +35,7 @@ async with Reader(host) as reader:
     async for tag in reader.inventory(session=1):
         monitor.observe(tag)
         for alert in monitor.check():
-            page_someone(alert)       # "quiet", once, until recovery
+            page_someone(alert)  # "quiet", once, until recovery
 ```
 
 `observe()` feeds reads, `handle_event()` feeds reader notifications,
