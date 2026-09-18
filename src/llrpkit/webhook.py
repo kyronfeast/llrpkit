@@ -64,19 +64,6 @@ except ImportError as _exc:  # pragma: no cover - depends on install flavor
 __all__ = ["WebhookAuthError", "WebhookError", "WebhookSink", "presence_entry", "read_entry"]
 
 
-def _is_anyio_scope_cancel(exc: BaseException) -> bool:
-    """True when ``exc`` is a CancelledError anyio raised for one of its own cancel
-    scopes (its message is the marker; anyio checks the same thing), following
-    ``__context__`` because httpx/httpcore re-raise on the way out."""
-    seen: BaseException | None = exc
-    while isinstance(seen, asyncio.CancelledError):
-        msg = seen.args[0] if seen.args else None
-        if isinstance(msg, str) and msg.startswith("Cancelled via cancel scope "):
-            return True
-        seen = seen.__context__
-    return False
-
-
 class WebhookError(Exception):
     """The receiver rejected a request in a way that will not heal by retrying."""
 
@@ -160,24 +147,25 @@ class WebhookSink:
                 while pending:
                     chunk = pending[: self.batch_max]
                     body = {"reader": label, "token": self.token, "events": chunk}
+                    # The request runs in its own task: cancel scopes inside
+                    # httpx/anyio then only ever cancel that task, never this one.
+                    # On Windows a refused localhost connect takes ~1 s, outliving
+                    # anyio's 0.25 s happy-eyeballs scope, and its cancellation can
+                    # leak out of client.post as a bare CancelledError; awaited
+                    # through a child task it is just a failed request, while a
+                    # genuine cancel of the sink still shows in our own counter.
                     task = asyncio.current_task()
                     cancels_before = task.cancelling() if task is not None else 0
+                    post = asyncio.ensure_future(client.post(self.url, json=body))
                     try:
-                        response = await client.post(self.url, json=body)
+                        response = await post
                     except httpx.HTTPError:
                         return  # receiver unreachable; keep the batch, retry later
-                    except asyncio.CancelledError as exc:
-                        if task is None or not _is_anyio_scope_cancel(exc):
+                    except asyncio.CancelledError:
+                        if task is not None and task.cancelling() > cancels_before:
+                            post.cancel()  # the caller cancelled us: drop the request
                             raise
-                        # anyio's connect-timeout scope inside httpx, not our caller
-                        # (seen on Windows, where a refused localhost connect takes
-                        # ~1 s and outlives happy-eyeballs' 0.25 s scope). Undo the
-                        # cancel requests it left on this task and treat it as
-                        # "receiver unreachable"; a genuine cancel that raced it is
-                        # still counted and resurfaced below.
-                        while task.cancelling() > cancels_before:
-                            task.uncancel()
-                        return
+                        return  # the request's own cancellation leaked: unreachable
                     finally:
                         _resurface()
                     if response.status_code == 403:
