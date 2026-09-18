@@ -9,14 +9,18 @@ and the docstrings in the source go deeper than this page.
 from llrpkit import Reader, TagReport, InventoryProfile, HealthMonitor
 
 async with Reader("192.168.1.10") as reader:
-    caps = reader.capabilities            # powers, RF modes, antennas — parsed
-    modes = reader.annotated_modes()      # RFModeTable + curated guidance
+    caps = reader.capabilities  # powers, RF modes, antennas — parsed
+    modes = reader.annotated_modes()  # RFModeTable + curated guidance
     await reader.set_keepalive(5000)
-    print(await reader.get_temperature()) # Octane extension
+    print(await reader.get_temperature())  # Octane extension
 
     async for tag in reader.inventory(
-        antennas=(1, 2), session=1, search_mode=3,   # TagFocus
-        tx_power_dbm=27.0, include_phase=True, include_tid=True,
+        antennas=(1, 2),
+        session=1,
+        search_mode=3,  # TagFocus
+        tx_power_dbm=27.0,
+        include_phase=True,
+        include_tid=True,
     ):
         print(tag.epc_hex, tag.antenna, tag.rssi_dbm, tag.phase_deg)
 ```
@@ -37,8 +41,8 @@ from llrpkit.protocol import messages
 
 async with LLRPClient("192.168.1.10") as client:
     response = check_status(await client.transact(messages.GET_ROSPECS()))
-    report = await client.reports.get()      # unsolicited RO_ACCESS_REPORTs
-    event = await client.events.get()        # notifications & everything else
+    report = await client.reports.get()  # unsolicited RO_ACCESS_REPORTs
+    event = await client.events.get()  # notifications & everything else
 ```
 
 Framing, message-ID correlation, automatic keepalive acks, and clean teardown.
@@ -70,7 +74,7 @@ from llrpkit.emulator import EmulatedTag, LLRPEmulator
 async with LLRPEmulator(tags=[EmulatedTag(epc=b"\xe2" + b"\x00" * 11)]) as emu:
     reader = Reader("127.0.0.1", emu.port)
     ...
-    await emu.set_antenna_connected(2, False)   # fault injection
+    await emu.set_antenna_connected(2, False)  # fault injection
 ```
 
 A wire-faithful Impinj-flavored reader: capabilities, ROSpec lifecycle, Octane
@@ -82,9 +86,9 @@ well as one for yours.
 
 ```python
 result = await reader.read_memory(bank="user", word_count=4, target_epc=epc)
-result.ok, result.data                       # True, b'...'
+result.ok, result.data  # True, b'...'
 await reader.write_memory(bank="user", data="cafebabe", target_epc=epc)
-await reader.write_epc(new_epc, target_epc=old_epc)   # same length required
+await reader.write_epc(new_epc, target_epc=old_epc)  # same length required
 await reader.kill_tag(kill_password=0x2A2A2A2A, target_epc=epc)  # permanent!
 ```
 
@@ -99,23 +103,23 @@ own result name (`"Tag_Memory_Locked_Error"` and friends). Always pass
 
 ```python
 async for tag in reader.inventory(epc_filter="e280", filter_action="include"):
-    ...                                       # the reader itself pre-selects
+    ...  # the reader itself pre-selects
 
-state = await reader.get_gpio()               # {1: "low", ...}, {1: False, ...}
-await reader.set_gpo(2, True)                 # stack light on
+state = await reader.get_gpio()  # {1: "low", ...}, {1: False, ...}
+await reader.set_gpo(2, True)  # stack light on
 
-async for window in reader.windows(gpi_trigger=1):   # a photo eye on GPI 1
-    print(window.epcs or "NOTHING READ", window.duration)   # one per object
+async for window in reader.windows(gpi_trigger=1):  # a photo eye on GPI 1
+    print(window.epcs or "NOTHING READ", window.duration)  # one per object
 
 from llrpkit import PresenceTracker, decode_epc, ticked_stream
 
 tracker = PresenceTracker(depart_after=2.0)
 async with contextlib.aclosing(ticked_stream(reader.inventory(session=1))) as ticked:
-    async for tag in ticked:                  # TagReport, or None on quiet ticks
+    async for tag in ticked:  # TagReport, or None on quiet ticks
         for event in (*(tracker.observe(tag) if tag else ()), *tracker.check()):
             print(event.kind, event.epc_hex, event.dwell_s)
 
-decode_epc("3074257bf7194e4000001a85").gs1    # "(01) 80614141123458 (21) 6789"
+decode_epc("3074257bf7194e4000001a85").gs1  # "(01) 80614141123458 (21) 6789"
 ```
 
 Select filters run **on the reader** (C1G2 Select), so unwanted tags never
@@ -132,7 +136,7 @@ SSCCs, and pure-identity URIs.
 ```python
 from llrpkit import TagWriter, sweep
 
-with TagWriter("dock.csv") as writer:         # or .jsonl
+with TagWriter("dock.csv") as writer:  # or .jsonl
     async for tag in reader.inventory(duration=30):
         writer.write(tag)
 

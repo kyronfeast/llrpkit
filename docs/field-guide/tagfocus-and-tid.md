@@ -22,7 +22,7 @@ flag to decay.
 
 ```python
 async for tag in reader.inventory(session=1, search_mode=3):
-    handle_arrival(tag)   # ~one report per tag per visit
+    handle_arrival(tag)  # ~one report per tag per visit
 ```
 
 The requirements are strict and the failure mode is silent: TagFocus needs the

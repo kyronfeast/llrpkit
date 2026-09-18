@@ -58,8 +58,8 @@ from llrpkit import Reader, ReaderPolicy
 policy = ReaderPolicy.load("line4.json")
 async with Reader("192.168.1.10") as reader:
     async for tag in reader.inventory(session=1, policy=policy):
-        handle(tag)            # only pails on antenna 4; tag.category is set
-print(policy.counters())       # {"kept": ..., "dropped": ..., "by_category": {...}}
+        handle(tag)  # only pails on antenna 4; tag.category is set
+print(policy.counters())  # {"kept": ..., "dropped": ..., "by_category": {...}}
 ```
 
 From the **dashboard Control tab**: build per-antenna rules with the
