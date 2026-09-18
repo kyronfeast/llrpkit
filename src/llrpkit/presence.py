@@ -66,14 +66,22 @@ async def ticked_stream(
     task = asyncio.create_task(pump(), name="llrpkit-ticked-pump")
     try:
         while True:
+            # The timeout bounds only the queue get. It must never span the
+            # yield: the deadline would keep running while the consumer holds
+            # the item, and a consumer slower than one tick (a webhook POST to
+            # a receiver that is down, a slow MQTT ack) would be cancelled in
+            # its own code, where the timeout cannot turn that back into a
+            # TimeoutError, and see a bare CancelledError.
             try:
                 async with asyncio.timeout(tick):
-                    yield await queue.get()
+                    item = await queue.get()
             except TimeoutError:
                 if task.done():
                     await task  # re-raise the stream's exception, if any
                     return  # stream ended cleanly and the queue is drained
                 yield None
+                continue
+            yield item
     finally:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

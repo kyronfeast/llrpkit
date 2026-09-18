@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 
 import pytest
 
@@ -202,6 +203,34 @@ async def test_ticked_stream_survives_quiet_and_cancels_cleanly() -> None:
             assert response.ro_specs == [], "quiet-cancel must still delete the ROSpec"
         finally:
             await reader.close()
+
+
+async def test_ticked_stream_never_cancels_a_slow_consumer() -> None:
+    """The tick timeout bounds the queue get only. It must not keep running while
+    the consumer holds an item: a consumer slower than one tick (a webhook POST
+    to a receiver that is down takes ~1 s on Windows) was cancelled in its own
+    code with a bare CancelledError, which no timeout could turn back into a
+    TimeoutError, and the whole sink died mid-outage."""
+    import contextlib
+
+    from llrpkit.presence import ticked_stream
+
+    async def three_reads() -> AsyncGenerator[TagReport, None]:
+        for i in range(3):
+            yield read(bytes([0xE2, i]) + b"\x00" * 10)
+            await asyncio.sleep(0.02)
+
+    got: list[TagReport] = []
+    async with contextlib.aclosing(ticked_stream(three_reads(), tick=0.05)) as ticked:
+        async for tag in ticked:
+            if tag is None:
+                continue
+            got.append(tag)
+            await asyncio.sleep(0.2)  # slower than the tick, like a stalled receiver
+            if len(got) == 3:
+                break
+    assert len(got) == 3
+    assert asyncio.current_task().cancelling() == 0  # type: ignore[union-attr]
 
 
 def test_events_payload_schema_is_pinned() -> None:
